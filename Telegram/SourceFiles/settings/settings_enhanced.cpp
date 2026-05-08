@@ -9,16 +9,20 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 #include <mainwindow.h>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QTextEdit>
 #include "settings/settings_enhanced.h"
 
+#include "chat_helpers/inline_bot_rules.h"
 #include "settings/settings_common.h"
 #include <ui/vertical_list.h>
+#include "ui/layers/generic_box.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/continuous_sliders.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/text/text_utilities.h" // Ui::Text::ToUpper
 #include "boxes/connection_box.h"
 #include "boxes/enhanced_options_box.h"
@@ -36,11 +40,298 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 #include "main/main_session.h"
 #include "layout/layout_item_base.h"
 #include "facades.h"
+#include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "apiwrap.h"
 #include "api/api_blocked_peers.h"
 
+#include <optional>
+#include <string_view>
+
 namespace Settings {
+
+namespace {
+
+[[nodiscard]] Core::Settings &SettingsPrefs() {
+	return Core::App().settings();
+}
+
+void SavePref(const std::string_view key, bool value) {
+	SettingsPrefs().writePref<bool>(key, value);
+	Core::App().saveSettingsDelayed();
+}
+
+[[nodiscard]] QStringList RegexLines(const QString &text) {
+	auto result = QStringList();
+	for (const auto &line : text.split('\n')) {
+		const auto trimmed = line.trimmed();
+		if (!trimmed.isEmpty()) {
+			result.push_back(trimmed);
+		}
+	}
+	return result;
+}
+
+[[nodiscard]] bool ValidRuleForm(
+		const QString &username,
+		const QStringList &rules) {
+	if (!InlineBotRules::ValidateUsername(username) || rules.empty()) {
+		return false;
+	}
+	for (const auto &rule : rules) {
+		if (!InlineBotRules::ValidateRegex(rule)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void InlineBotRuleDetailsBox(
+		not_null<Ui::GenericBox*> box,
+		InlineBotRules::RuleItem item,
+		Fn<void()> refresh) {
+	box->setTitle(rpl::single(item.username));
+	box->setWidth(st::boxWideWidth);
+
+	const auto layout = box->verticalLayout();
+	AddDividerText(
+		layout,
+		(item.source == InlineBotRules::Source::Remote)
+			? tr::lng_settings_inline_bot_remote_rule_about()
+			: tr::lng_settings_inline_bot_local_rule_about());
+
+	const auto enabled = AddButtonWithIcon(
+		layout,
+		tr::lng_settings_inline_bot_rule_enabled(),
+		st::settingsButtonNoIcon);
+	enabled->toggleOn(rpl::single(item.enabled))->toggledChanges(
+	) | rpl::filter([=](bool toggled) {
+		return toggled != item.enabled;
+	}) | rpl::on_next([=](bool toggled) {
+		if (item.source == InlineBotRules::Source::Remote) {
+			InlineBotRules::SetRemoteEnabled(item.username, toggled);
+		} else {
+			InlineBotRules::SetLocalEnabled(item.localIndex, toggled);
+		}
+		box->closeBox();
+		if (refresh) {
+			refresh();
+		}
+	}, enabled->lifetime());
+
+	const auto field = box->addRow(object_ptr<Ui::InputField>(
+		box,
+		st::defaultInputField,
+		Ui::InputField::Mode::MultiLine,
+		tr::lng_settings_inline_bot_rule_regexes(),
+		TextWithTags{ item.rules.join('\n') }),
+		st::boxRowPadding);
+	field->rawTextEdit()->setReadOnly(true);
+
+	box->addButton(tr::lng_close(), [=] {
+		box->closeBox();
+		if (refresh) {
+			refresh();
+		}
+	});
+}
+
+void EditInlineBotRuleBox(
+		not_null<Ui::GenericBox*> box,
+		std::optional<InlineBotRules::RuleItem> item,
+		Fn<void()> refresh) {
+	const auto editing = item.has_value();
+	box->setTitle(editing
+		? tr::lng_settings_inline_bot_rule_edit()
+		: tr::lng_settings_inline_bot_rule_add());
+	box->setWidth(st::boxWideWidth);
+
+	const auto username = box->addRow(object_ptr<Ui::InputField>(
+		box,
+		st::defaultInputField,
+		tr::lng_settings_inline_bot_rule_username(),
+		item ? item->username : QString()),
+		st::boxRowPadding);
+
+	const auto rules = box->addRow(object_ptr<Ui::InputField>(
+		box,
+		st::defaultInputField,
+		Ui::InputField::Mode::MultiLine,
+		tr::lng_settings_inline_bot_rule_regexes(),
+		TextWithTags{ item ? item->rules.join('\n') : QString() }),
+		st::boxRowPadding);
+	Ui::AddDividerText(
+		box->verticalLayout(),
+		tr::lng_settings_inline_bot_rule_regexes_about());
+
+	if (editing) {
+		const auto enabled = AddButtonWithIcon(
+			box->verticalLayout(),
+			tr::lng_settings_inline_bot_rule_enabled(),
+			st::settingsButtonNoIcon);
+		enabled->toggleOn(rpl::single(item->enabled))->toggledChanges(
+		) | rpl::filter([=](bool toggled) {
+			return toggled != item->enabled;
+		}) | rpl::on_next([=](bool toggled) {
+			InlineBotRules::SetLocalEnabled(item->localIndex, toggled);
+		}, enabled->lifetime());
+	}
+
+	box->setFocusCallback([=] {
+		username->setFocusFast();
+	});
+
+	box->addButton(tr::lng_settings_save(), [=] {
+		const auto bot = username->getLastText();
+		const auto lines = RegexLines(rules->getLastText());
+		if (!ValidRuleForm(bot, lines)) {
+			username->showError();
+			rules->showError();
+			return;
+		}
+		const auto ok = editing
+			? InlineBotRules::UpdateLocal(item->localIndex, bot, lines)
+			: InlineBotRules::AddLocal(bot, lines);
+		if (ok) {
+			box->closeBox();
+			if (refresh) {
+				refresh();
+			}
+		}
+	});
+	if (editing) {
+		box->addButton(tr::lng_settings_inline_bot_rule_delete(), [=] {
+			InlineBotRules::RemoveLocal(item->localIndex);
+			box->closeBox();
+			if (refresh) {
+				refresh();
+			}
+		});
+	}
+	box->addButton(tr::lng_cancel(), [=] {
+		box->closeBox();
+		if (refresh) {
+			refresh();
+		}
+	});
+}
+
+void ShowInlineBotRulesBox();
+
+void InlineBotRulesBox(not_null<Ui::GenericBox*> box) {
+	box->setTitle(tr::lng_settings_inline_bot_rules());
+	box->setWidth(st::boxWideWidth);
+
+	const auto layout = box->verticalLayout();
+	const auto remote = InlineBotRules::RemoteRules();
+	const auto local = InlineBotRules::LocalRules();
+	const auto refresh = [weak = base::make_weak(box)] {
+		if (const auto strong = weak.get()) {
+			strong->closeBox();
+		}
+		ShowInlineBotRulesBox();
+	};
+
+	if (!remote.empty()) {
+		AddSubsectionTitle(layout, tr::lng_settings_inline_bot_remote_rules());
+		for (const auto &rule : remote) {
+			const auto button = AddButtonWithLabel(
+				layout,
+				rpl::single(rule.username),
+				rpl::single((rule.enabled
+					? tr::lng_settings_inline_bot_rule_on(tr::now)
+					: tr::lng_settings_inline_bot_rule_off(tr::now))
+					+ u" - "_q
+					+ InlineBotRules::RulesSummary(rule.rules)),
+				st::settingsButtonNoIcon);
+			button->addClickHandler([=] {
+				Ui::show(Box(InlineBotRuleDetailsBox, rule, refresh));
+			});
+		}
+		Ui::AddSkip(layout);
+	}
+
+	AddSubsectionTitle(layout, tr::lng_settings_inline_bot_local_rules());
+	const auto add = AddButtonWithIcon(
+		layout,
+		tr::lng_settings_inline_bot_rule_add_short(),
+		st::settingsButtonNoIcon);
+	add->addClickHandler([=] {
+		Ui::show(Box(
+			EditInlineBotRuleBox,
+			std::optional<InlineBotRules::RuleItem>(),
+			refresh));
+	});
+	for (const auto &rule : local) {
+		const auto button = AddButtonWithLabel(
+			layout,
+			rpl::single(rule.username),
+			rpl::single((rule.enabled
+				? tr::lng_settings_inline_bot_rule_on(tr::now)
+				: tr::lng_settings_inline_bot_rule_off(tr::now))
+				+ u" - "_q
+				+ InlineBotRules::RulesSummary(rule.rules)),
+			st::settingsButtonNoIcon);
+		button->addClickHandler([=] {
+			Ui::show(Box(EditInlineBotRuleBox, std::optional(rule), refresh));
+		});
+	}
+
+	box->addButton(tr::lng_settings_inline_bot_rules_refresh(), [=] {
+		if (const auto window = App::wnd()) {
+			if (const auto controller = window->sessionController()) {
+				const auto weak = base::make_weak(box);
+				InlineBotRules::RefreshRemote(
+					&controller->session(),
+					[=] {
+						if (const auto strong = weak.get()) {
+							strong->closeBox();
+						}
+						Ui::show(Box(InlineBotRulesBox));
+					},
+					true);
+				return;
+			}
+		}
+	});
+	box->addButton(tr::lng_close(), [=] {
+		box->closeBox();
+	});
+}
+
+void ShowInlineBotRulesBox() {
+	const auto show = [] {
+		Ui::show(Box(InlineBotRulesBox));
+	};
+	if (const auto window = App::wnd()) {
+		if (const auto controller = window->sessionController()) {
+			InlineBotRules::RefreshRemote(&controller->session(), show);
+			return;
+		}
+	}
+	show();
+}
+
+void AddPrefToggle(
+		not_null<Ui::VerticalLayout*> container,
+		rpl::producer<QString> text,
+		const std::string_view key,
+		bool fallback) {
+	const auto button = AddButtonWithIcon(
+		container,
+		std::move(text),
+		st::settingsButtonNoIcon);
+	button->toggleOn(
+		rpl::single(SettingsPrefs().readPref<bool>(key, fallback))
+	)->toggledChanges(
+	) | rpl::filter([=](bool toggled) {
+		return toggled != SettingsPrefs().readPref<bool>(key, fallback);
+	}) | rpl::on_next([=](bool toggled) {
+		SavePref(key, toggled);
+	}, button->lifetime());
+}
+
+} // namespace
 
 	void Enhanced::SetupEnhancedNetwork(not_null<Ui::VerticalLayout *> container) {
 		const auto wrap = container->add(
@@ -128,6 +419,35 @@ namespace Settings {
 						container,
 						object_ptr<Ui::VerticalLayout>(container)));
 		const auto inner = wrap->entity();
+
+		AddPrefToggle(
+			inner,
+			tr::lng_settings_disable_input_status(),
+			Core::kEnhancedDisableChatActionKey,
+			false);
+		AddPrefToggle(
+			inner,
+			tr::lng_settings_auto_inline_bot(),
+			Core::kEnhancedAutoInlineBotKey,
+			true);
+		AddPrefToggle(
+			inner,
+			tr::lng_settings_auto_inline_bot_direct_send(),
+			Core::kEnhancedAutoInlineBotDirectSendKey,
+			false);
+		AddButtonWithIcon(
+			inner,
+			tr::lng_settings_inline_bot_rules(),
+			st::settingsButtonNoIcon
+		)->addClickHandler([=] {
+			ShowInlineBotRulesBox();
+		});
+		AddPrefToggle(
+			inner,
+			tr::lng_settings_force_copy(),
+			Core::kEnhancedForceCopyKey,
+			false);
+		AddSkip(inner);
 
 		auto MsgIdBtn = AddButtonWithIcon(
 				inner,

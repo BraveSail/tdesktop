@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_polls.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "core/application.h"
+#include "core/core_settings.h"
 #include "core/file_utilities.h"
 #include <core/shortcuts.h>
 #include "core/click_handler_types.h"
@@ -138,6 +139,10 @@ namespace {
 constexpr auto kScrollDateHideTimeout = 1000;
 constexpr auto kUnloadHeavyPartsPages = 2;
 constexpr auto kClearUserpicsAfter = 50;
+
+[[nodiscard]] bool ForceCopyEnabled() {
+	return Core::App().settings().readPref<bool>(Core::kEnhancedForceCopyKey);
+}
 
 // Helper binary search for an item in a list that is not completely
 // above the given top of the visible area or below the given bottom of the visible area
@@ -3778,12 +3783,15 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 }
 
 bool HistoryInner::hasCopyRestriction(HistoryItem *item) const {
-	return !_peer->allowsForwarding() || (item && item->forbidsForward());
+	return !ForceCopyEnabled()
+		&& (!_peer->allowsForwarding()
+			|| (item && item->forbidsForward()));
 }
 
 bool HistoryInner::hasCopyMediaRestriction(
 		not_null<HistoryItem*> item) const {
-	return hasCopyRestriction(item) || item->forbidsSaving();
+	return !ForceCopyEnabled()
+		&& (hasCopyRestriction(item) || item->forbidsSaving());
 }
 
 bool HistoryInner::showCopyRestriction(HistoryItem *item) {
@@ -3811,6 +3819,9 @@ bool HistoryInner::showCopyMediaRestriction(not_null<HistoryItem*> item) {
 }
 
 bool HistoryInner::hasCopyRestrictionForSelected() const {
+	if (ForceCopyEnabled()) {
+		return false;
+	}
 	if (hasCopyRestriction()) {
 		return true;
 	}
@@ -3823,6 +3834,9 @@ bool HistoryInner::hasCopyRestrictionForSelected() const {
 }
 
 bool HistoryInner::showCopyRestrictionForSelected() {
+	if (ForceCopyEnabled()) {
+		return false;
+	}
 	for (const auto &[item, selection] : _selected) {
 		if (showCopyRestriction(item)) {
 			return true;

@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/message_field.h"
 
+#include "chat_helpers/inline_bot_rules.h"
 #include "history/history_widget.h"
 #include "history/history.h" // History::session
 #include "history/history_item.h" // HistoryItem::originalText
@@ -883,6 +884,26 @@ InlineBotQuery ParseInlineBotQuery(
 		} else {
 			inlineUsernameLength = 0;
 		}
+	}
+	if (const auto username = InlineBotRules::Match(text)
+		; !username.isEmpty()) {
+		result.username = username;
+		result.query = text;
+		result.autoInlineBot = true;
+		if (const auto peer = session->data().peerByUsername(result.username)) {
+			if (const auto user = peer->asUser()) {
+				result.bot = user;
+			}
+			result.lookingUpBot = false;
+		} else {
+			result.lookingUpBot = true;
+		}
+		if (result.bot
+			&& (!result.bot->isBot()
+				|| result.bot->botInfo->inlinePlaceholder.isEmpty())) {
+			return InlineBotQuery();
+		}
+		return result;
 	}
 	if (inlineUsernameLength < 3) {
 		result.bot = nullptr;

@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_send_progress.h"
 
+#include "core/application.h"
+#include "core/core_settings.h"
 #include "main/main_session.h"
 #include "history/history.h"
 #include "data/data_peer.h"
@@ -113,6 +115,11 @@ void SendProgressManager::send(const Key &key, int progress) {
 		return;
 	}
 	using Type = SendProgressType;
+	if (key.type == Type::Typing
+			&& Core::App().settings().readPref<bool>(
+			Core::kEnhancedDisableChatActionKey)) {
+		return;
+	}
 	const auto action = [&]() -> MTPsendMessageAction {
 		const auto p = MTP_int(progress);
 		switch (key.type) {

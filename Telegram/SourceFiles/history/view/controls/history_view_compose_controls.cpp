@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/group/calls_group_stars_box.h"
 #include "chat_helpers/compose/compose_show.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
+#include "chat_helpers/inline_bot_rules.h"
 #include "chat_helpers/message_field.h"
 #include "chat_helpers/tabbed_panel.h"
 #include "chat_helpers/tabbed_section.h"
@@ -1116,6 +1117,7 @@ ComposeControls::ComposeControls(
 		}, _wrap->lifetime());
 	}
 	init();
+	InlineBotRules::RefreshRemote(&session());
 }
 
 rpl::producer<> ComposeControls::showScheduledRequests() const {
@@ -2493,7 +2495,7 @@ void ComposeControls::updateFieldPlaceholder() {
 	if (!isEditingMessage() && _isInlineBot) {
 		_field->setPlaceholder(
 			rpl::single(_inlineBot->botInfo->inlinePlaceholder.mid(1)),
-			_inlineBot->username().size() + 2);
+			_inlineBotFromRule ? 0 : (_inlineBot->username().size() + 2));
 		return;
 	}
 
@@ -2997,6 +2999,10 @@ void ComposeControls::initSendAsButton(
 }
 
 void ComposeControls::cancelInlineBot() {
+	if (_inlineBotFromRule) {
+		clearInlineBot();
+		return;
+	}
 	const auto &textWithTags = _field->getTextWithTags();
 	if (textWithTags.text.size() > _inlineBotUsername.size() + 2) {
 		setFieldText(
@@ -3014,6 +3020,7 @@ void ComposeControls::clearInlineBot() {
 	if (_inlineBot || _inlineLookingUpBot) {
 		_inlineBot = nullptr;
 		_inlineLookingUpBot = false;
+		_inlineBotFromRule = false;
 		inlineBotChanged();
 		_field->finishAnimating();
 	}
@@ -4437,6 +4444,7 @@ void ComposeControls::updateInlineBotQuery() {
 	const auto query = ParseInlineBotQuery(&session(), _field);
 	if (_inlineBotUsername != query.username) {
 		_inlineBotUsername = query.username;
+		_inlineBotFromRule = query.autoInlineBot;
 		auto &api = session().api();
 		if (_inlineBotResolveRequestId) {
 			api.request(_inlineBotResolveRequestId).cancel();
@@ -4487,10 +4495,12 @@ void ComposeControls::updateInlineBotQuery() {
 			applyInlineBotQuery(query.bot, query.query);
 		}
 	} else if (query.lookingUpBot) {
+		_inlineBotFromRule = query.autoInlineBot;
 		if (!_inlineLookingUpBot) {
 			applyInlineBotQuery(_inlineBot, query.query);
 		}
 	} else {
+		_inlineBotFromRule = query.autoInlineBot;
 		applyInlineBotQuery(query.bot, query.query);
 	}
 }
@@ -4512,7 +4522,10 @@ void ComposeControls::applyInlineBotQuery(
 				_regularWindow);
 			_inlineResults->setResultSelectedCallback([=](
 					InlineBots::ResultSelected result) {
-				if (result.open) {
+				const auto directSend = _inlineBotFromRule
+					&& Core::App().settings().readPref<bool>(
+						Core::kEnhancedAutoInlineBotDirectSendKey);
+				if (result.open && !directSend) {
 					const auto request = result.result->openRequest();
 					if (const auto photo = request.photo()) {
 						_regularWindow->openPhoto(photo, {});

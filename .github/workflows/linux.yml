@@ -2,6 +2,8 @@ name: Linux.
 
 on:
   push:
+    branches-ignore:
+      - dev2
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -21,6 +23,8 @@ on:
       - 'Telegram/configure.bat'
       - 'Telegram/Telegram.plist'
   pull_request:
+    branches-ignore:
+      - dev2
     paths-ignore:
       - 'docs/**'
       - '**.md'

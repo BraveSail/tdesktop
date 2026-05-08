@@ -38,6 +38,22 @@ namespace Core {
 
 inline constexpr auto kScreenReaderModeDisabledKey
 	= "screen-reader-mode-disabled"_cs;
+inline constexpr auto kEnhancedDisableChatActionKey
+	= "enhanced-disable-chat-action"_cs;
+inline constexpr auto kEnhancedAutoInlineBotKey
+	= "enhanced-auto-inline-bot"_cs;
+inline constexpr auto kEnhancedAutoInlineBotDirectSendKey
+	= "enhanced-auto-inline-bot-direct-send"_cs;
+inline constexpr auto kEnhancedAutoInlineBotLocalRulesKey
+	= "enhanced-auto-inline-bot-local-rules"_cs;
+inline constexpr auto kEnhancedAutoInlineBotRemoteRulesKey
+	= "enhanced-auto-inline-bot-remote-rules"_cs;
+inline constexpr auto kEnhancedAutoInlineBotRemoteUpdatedKey
+	= "enhanced-auto-inline-bot-remote-updated"_cs;
+inline constexpr auto kEnhancedAutoInlineBotDisabledRemoteKey
+	= "enhanced-auto-inline-bot-disabled-remote"_cs;
+inline constexpr auto kEnhancedForceCopyKey
+	= "enhanced-force-copy"_cs;
 
 struct WindowPosition {
 	int32 moncrc = 0;

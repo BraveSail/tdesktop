@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/calls_instance.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "core/core_settings.h"
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
 #include "core/ui_integration.h"
@@ -132,6 +133,10 @@ struct RecognitionId {
 
 using RecognitionResult = Platform::TextRecognition::Result;
 using RecognitionCacheMap = base::flat_map<RecognitionId, RecognitionResult>;
+
+[[nodiscard]] bool ForceCopyEnabled() {
+	return Core::App().settings().readPref<bool>(Core::kEnhancedForceCopyKey);
+}
 
 [[nodiscard]] RecognitionCacheMap *RecognitionCache() {
 	static auto cache = Platform::TextRecognition::IsAvailable()
@@ -1217,8 +1222,9 @@ bool OverlayWidget::hasCopyMediaRestriction(bool skipPremiumCheck) const {
 			? !story->canDownloadIfPremium()
 			: !story->canDownloadChecked();
 	}
-	return (_history && !_history->peer->allowsForwarding())
-		|| (_message && _message->forbidsSaving());
+	return !ForceCopyEnabled()
+		&& ((_history && !_history->peer->allowsForwarding())
+			|| (_message && _message->forbidsSaving()));
 }
 
 bool OverlayWidget::showCopyMediaRestriction(bool skipPRemiumCheck) {

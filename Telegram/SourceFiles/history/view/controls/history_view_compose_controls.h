@@ -533,6 +533,7 @@ private:
 	UserData *_inlineBot = nullptr;
 	QString _inlineBotUsername;
 	bool _inlineLookingUpBot = false;
+	bool _inlineBotFromRule = false;
 	mtpRequestId _inlineBotResolveRequestId = 0;
 	bool _isInlineBot = false;
 	bool _botCommandShown = false;

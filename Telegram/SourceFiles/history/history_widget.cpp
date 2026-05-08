@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/premium_preview_box.h"
 #include "boxes/star_gift_box.h"
 #include "boxes/peers/edit_peer_permissions_box.h" // ShowAboutGigagroup.
+#include "chat_helpers/inline_bot_rules.h"
 #include "boxes/peers/edit_peer_requests_box.h"
 #include "core/core_settings.h"
 #include "core/file_utilities.h"
@@ -337,6 +338,7 @@ HistoryWidget::HistoryWidget(
 	}))
 , _topShadow(this) {
 	setAcceptDrops(true);
+	InlineBotRules::RefreshRemote(&session());
 
 	session().downloaderTaskFinished() | rpl::on_next([=] {
 		update();
@@ -1823,6 +1825,7 @@ void HistoryWidget::updateInlineBotQuery() {
 	const auto query = parseInlineBotQuery();
 	if (_inlineBotUsername != query.username) {
 		_inlineBotUsername = query.username;
+		_inlineBotFromRule = query.autoInlineBot;
 		if (_inlineBotResolveRequestId) {
 			_api.request(_inlineBotResolveRequestId).cancel();
 			_inlineBotResolveRequestId = 0;
@@ -1869,10 +1872,12 @@ void HistoryWidget::updateInlineBotQuery() {
 			applyInlineBotQuery(query.bot, query.query);
 		}
 	} else if (query.lookingUpBot) {
+		_inlineBotFromRule = query.autoInlineBot;
 		if (!_inlineLookingUpBot) {
 			applyInlineBotQuery(_inlineBot, query.query);
 		}
 	} else {
+		_inlineBotFromRule = query.autoInlineBot;
 		applyInlineBotQuery(query.bot, query.query);
 	}
 }
@@ -1888,7 +1893,10 @@ void HistoryWidget::applyInlineBotQuery(UserData *bot, const QString &query) {
 			_inlineResults.create(this, controller());
 			_inlineResults->setResultSelectedCallback([=](
 					InlineBots::ResultSelected result) {
-				if (result.open) {
+				const auto directSend = _inlineBotFromRule
+					&& Core::App().settings().readPref<bool>(
+						Core::kEnhancedAutoInlineBotDirectSendKey);
+				if (result.open && !directSend) {
 					const auto request = result.result->openRequest();
 					const auto showDrawButton = canWriteMessage();
 					if (const auto photo = request.photo()) {
@@ -4724,6 +4732,10 @@ void HistoryWidget::checkReplyReturns() {
 }
 
 void HistoryWidget::cancelInlineBot() {
+	if (_inlineBotFromRule) {
+		clearInlineBot();
+		return;
+	}
 	const auto &textWithTags = _field->getTextWithTags();
 	if (textWithTags.text.size() > _inlineBotUsername.size() + 2) {
 		setFieldText(
@@ -6645,6 +6657,7 @@ void HistoryWidget::clearInlineBot() {
 	if (_inlineBot || _inlineLookingUpBot) {
 		_inlineBot = nullptr;
 		_inlineLookingUpBot = false;
+		_inlineBotFromRule = false;
 		inlineBotChanged();
 		_field->finishAnimating();
 	}
@@ -6688,7 +6701,7 @@ void HistoryWidget::updateFieldPlaceholder() {
 	if (!_editMsgId && _inlineBot && !_inlineLookingUpBot) {
 		_field->setPlaceholder(
 			rpl::single(_inlineBot->botInfo->inlinePlaceholder.mid(1)),
-			_inlineBotUsername.size() + 2);
+			_inlineBotFromRule ? 0 : (_inlineBotUsername.size() + 2));
 		return;
 	}
 

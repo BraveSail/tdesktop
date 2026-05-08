@@ -1,4 +1,4 @@
-﻿# This file is part of Telegram Desktop,
+# This file is part of Telegram Desktop,
 # the official desktop application for the Telegram messaging service.
 #
 # For license and copyright information please follow this link:
@@ -488,6 +488,8 @@ PRIVATE
     chat_helpers/field_autocomplete.h
     chat_helpers/gifs_list_widget.cpp
     chat_helpers/gifs_list_widget.h
+    chat_helpers/inline_bot_rules.cpp
+    chat_helpers/inline_bot_rules.h
     chat_helpers/message_field.cpp
     chat_helpers/message_field.h
     chat_helpers/share_message_phrase_factory.cpp

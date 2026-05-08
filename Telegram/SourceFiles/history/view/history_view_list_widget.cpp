@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -99,6 +99,10 @@ constexpr auto kPreloadIfLessThanScreens = 2;
 constexpr auto kPreloadedScreensCountFull
 	= kPreloadedScreensCount + 1 + kPreloadedScreensCount;
 constexpr auto kClearUserpicsAfter = 50;
+
+[[nodiscard]] bool ForceCopyEnabled() {
+	return Core::App().settings().readPref<bool>(Core::kEnhancedForceCopyKey);
+}
 
 [[nodiscard]] std::unique_ptr<TranslateTracker> MaybeTranslateTracker(
 		History *history) {
@@ -1628,16 +1632,21 @@ bool ListWidget::isEmpty() const {
 }
 
 bool ListWidget::hasCopyRestriction(HistoryItem *item) const {
-	return _delegate->listCopyRestrictionType(item)
-		!= CopyRestrictionType::None;
+	return !ForceCopyEnabled()
+		&& (_delegate->listCopyRestrictionType(item)
+			!= CopyRestrictionType::None);
 }
 
 bool ListWidget::hasCopyMediaRestriction(not_null<HistoryItem*> item) const {
-	return _delegate->listCopyMediaRestrictionType(item)
-		!= CopyRestrictionType::None;
+	return !ForceCopyEnabled()
+		&& (_delegate->listCopyMediaRestrictionType(item)
+			!= CopyRestrictionType::None);
 }
 
 bool ListWidget::showCopyRestriction(HistoryItem *item) {
+	if (ForceCopyEnabled()) {
+		return false;
+	}
 	const auto type = _delegate->listCopyRestrictionType(item);
 	if (type == CopyRestrictionType::None) {
 		return false;
@@ -1651,6 +1660,9 @@ bool ListWidget::showCopyRestriction(HistoryItem *item) {
 }
 
 bool ListWidget::showCopyMediaRestriction(not_null<HistoryItem*> item) {
+	if (ForceCopyEnabled()) {
+		return false;
+	}
 	const auto type = _delegate->listCopyMediaRestrictionType(item);
 	if (type == CopyRestrictionType::None) {
 		return false;
@@ -1664,6 +1676,9 @@ bool ListWidget::showCopyMediaRestriction(not_null<HistoryItem*> item) {
 }
 
 bool ListWidget::hasCopyRestrictionForSelected() const {
+	if (ForceCopyEnabled()) {
+		return false;
+	}
 	if (hasCopyRestriction()) {
 		return true;
 	}
@@ -4807,7 +4822,8 @@ void ConfirmSendNowSelectedItems(not_null<ListWidget*> widget) {
 CopyRestrictionType CopyRestrictionTypeFor(
 		not_null<PeerData*> peer,
 		HistoryItem *item) {
-	return (peer->allowsForwarding() && (!item || !item->forbidsForward()))
+	return (ForceCopyEnabled()
+			|| (peer->allowsForwarding() && (!item || !item->forbidsForward())))
 		? CopyRestrictionType::None
 		: peer->isUser()
 		? CopyRestrictionType::User
@@ -4819,6 +4835,9 @@ CopyRestrictionType CopyRestrictionTypeFor(
 CopyRestrictionType CopyMediaRestrictionTypeFor(
 		not_null<PeerData*> peer,
 		not_null<HistoryItem*> item) {
+	if (ForceCopyEnabled()) {
+		return CopyRestrictionType::None;
+	}
 	if (const auto all = CopyRestrictionTypeFor(peer, item)
 		; all != CopyRestrictionType::None) {
 		return all;
@@ -4834,6 +4853,9 @@ CopyRestrictionType CopyMediaRestrictionTypeFor(
 
 CopyRestrictionType SelectRestrictionTypeFor(
 		not_null<PeerData*> peer) {
+	if (ForceCopyEnabled()) {
+		return CopyRestrictionType::None;
+	}
 	if (const auto chat = peer->asChat()) {
 		return chat->canDeleteMessages()
 			? CopyRestrictionType::None

@@ -637,6 +637,9 @@ mac:
 """)
 
 stage('opus', """
+win:
+version:preserve-win-pkgconfig
+common:
     git clone -b v1.5.2 https://github.com/xiph/opus.git
     cd opus
 win:
@@ -715,6 +718,9 @@ win:
 
 # Somehow in x86 Debug build dav1d crashes on AV1 10bpc videos.
 stage('dav1d', """
+win:
+version:preserve-win-pkgconfig
+common:
     git clone -b 1.5.3 https://code.videolan.org/videolan/dav1d.git
     cd dav1d
 win32:
@@ -780,6 +786,9 @@ mac:
 """)
 
 stage('openh264', """
+win:
+version:preserve-win-pkgconfig
+common:
     git clone -b v2.6.0 https://github.com/cisco/openh264.git
     cd openh264
 win32:
@@ -1042,6 +1051,9 @@ mac:
 """)
 
 stage('libvpx', """
+win:
+version:preserve-win-pkgconfig
+common:
     git clone https://github.com/webmproject/libvpx.git
 depends:patches/libvpx/*.patch
     cd libvpx
@@ -1142,6 +1154,7 @@ mac:
 
 stage('nv-codec-headers', """
 win:
+version:preserve-win-install-files
     git clone -b n12.1.14.0 https://github.com/FFmpeg/nv-codec-headers.git
 """)
 

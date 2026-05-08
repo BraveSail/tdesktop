@@ -2,6 +2,8 @@ name: Windows.
 
 on:
   push:
+    branches-ignore:
+      - dev2
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -21,6 +23,8 @@ on:
       - 'Telegram/configure.sh'
       - 'Telegram/Telegram.plist'
   pull_request:
+    branches-ignore:
+      - dev2
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -200,7 +204,7 @@ jobs:
 
       - name: Free up some disk space.
         shell: bash
-        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' ')' -type f ')' -o -empty ')' -delete
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -name Makefile -o -name '*.pc.in' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' ')' -type f ')' -o -empty ')' -delete
 
       - name: Telegram Desktop build.
         if: env.ONLY_CACHE == 'false'

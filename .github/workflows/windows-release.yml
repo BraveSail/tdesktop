@@ -1,0 +1,435 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      send_to_telegram:
+        description: Send the release archive to Telegram
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+  push:
+    branches:
+      - dev2
+    paths:
+      - '.github/workflows/windows-release.yml'
+
+jobs:
+  windows-release:
+    name: Windows x64 Qt6 Release
+    runs-on: windows-latest
+
+    env:
+      PREPARE_PATH: Telegram/build/prepare/prepare.py
+      REPO_NAME: tdesktop
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Clone.
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          path: TBuild\tdesktop
+
+      - name: First set up.
+        shell: bash
+        run: |
+          DOCPATH=$TBUILD/$REPO_NAME/docs/building-win.md
+          SDK="$(grep "SDK version" $DOCPATH | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+
+          echo "$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+
+      - name: Native Tools Command Prompt.
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+
+      - name: Report runner resources.
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
+          $pageFiles = Get-CimInstance Win32_PageFileUsage
+          [pscustomobject]@{
+            LogicalProcessors = $cs.NumberOfLogicalProcessors
+            TotalPhysicalMB = [math]::Round($cs.TotalPhysicalMemory / 1MB)
+            FreePhysicalMB = [math]::Round($os.FreePhysicalMemory / 1024)
+            TotalVirtualMB = [math]::Round($os.TotalVirtualMemorySize / 1024)
+            FreeVirtualMB = [math]::Round($os.FreeVirtualMemory / 1024)
+          } | Format-List
+          $disks | Select-Object DeviceID, @{ Name = "FreeGB"; Expression = { [math]::Round($_.FreeSpace / 1GB, 2) } }, @{ Name = "SizeGB"; Expression = { [math]::Round($_.Size / 1GB, 2) } } | Format-Table -AutoSize
+          $pageFiles | Select-Object Name, AllocatedBaseSize, CurrentUsage, PeakUsage | Format-Table -AutoSize
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: Free runner disk space.
+        shell: pwsh
+        run: |
+          $paths = @(
+            "C:\Android",
+            "C:\cabal",
+            "C:\ghcup",
+            "C:\hostedtoolcache\windows\CodeQL",
+            "C:\hostedtoolcache\windows\go",
+            "C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk",
+            "C:\hostedtoolcache\windows\Ruby",
+            "C:\hostedtoolcache\windows\stack",
+            "C:\Program Files\Android",
+            "C:\Program Files\Google\Chrome",
+            "C:\Program Files\MongoDB",
+            "C:\Program Files\MySQL",
+            "C:\Program Files\R",
+            "C:\Program Files\Microsoft SDKs\Azure",
+            "C:\ProgramData\chocolatey\lib\maven",
+            "C:\ProgramData\chocolatey\lib\pulumi"
+          )
+          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
+            Select-Object DeviceID, @{ Name = "FreeGBBefore"; Expression = { [math]::Round($_.FreeSpace / 1GB, 2) } }, @{ Name = "SizeGB"; Expression = { [math]::Round($_.Size / 1GB, 2) } } |
+            Format-Table -AutoSize
+          foreach ($path in $paths) {
+            if (Test-Path $path) {
+              Write-Host "Removing $path"
+              Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
+            Select-Object DeviceID, @{ Name = "FreeGBAfter"; Expression = { [math]::Round($_.FreeSpace / 1GB, 2) } }, @{ Name = "SizeGB"; Expression = { [math]::Round($_.Size / 1GB, 2) } } |
+            Format-Table -AutoSize
+
+      - name: ThirdParty cache.
+        id: third-party-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-${{ runner.arch }}-third-party-
+
+      - name: Libraries cache.
+        id: libraries-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-libs-release-${{ env.CACHE_KEY }}
+          restore-keys: |
+            ${{ runner.OS }}-x64-libs-release-
+            ${{ runner.OS }}-x64-libs-
+
+      - name: Qt cache.
+        id: qt-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-qt6-release-${{ env.CACHE_KEY }}
+          restore-keys: |
+            ${{ runner.OS }}-x64-qt6-release-
+            ${{ runner.OS }}-x64-qt6-
+
+      - name: Libraries.
+        env:
+          GYP_MSVS_OVERRIDE_PATH: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\'
+          GYP_MSVS_VERSION: 2022
+        run: |
+          where python
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent qt6
+
+      - name: Free up some disk space.
+        shell: bash
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -name Makefile -o -name '*.pc.in' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' ')' -type f ')' -o -empty ')' -delete
+
+      - name: Save ThirdParty cache.
+        if: steps.third-party-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
+
+      - name: Save Libraries cache.
+        if: steps.libraries-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-libs-release-${{ env.CACHE_KEY }}
+
+      - name: Save Qt cache.
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-qt6-release-${{ env.CACHE_KEY }}
+
+      - name: Expand pagefile.
+        uses: al-cheb/configure-pagefile-action@v1.5
+        continue-on-error: true
+        with:
+          minimum-size: 16GB
+          maximum-size: 16GB
+          disk-root: "D:"
+
+      - name: Report pagefile after expansion.
+        if: always()
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='D:'"
+          $pageFiles = Get-CimInstance Win32_PageFileUsage
+          [pscustomobject]@{
+            TotalVirtualMB = [math]::Round($os.TotalVirtualMemorySize / 1024)
+            FreeVirtualMB = [math]::Round($os.FreeVirtualMemory / 1024)
+            DFreeGB = [math]::Round($disk.FreeSpace / 1GB, 2)
+          } | Format-List
+          $pageFiles | Select-Object Name, AllocatedBaseSize, CurrentUsage, PeakUsage | Format-Table -AutoSize
+
+      - name: Telegram Desktop build.
+        shell: pwsh
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+        run: |
+          if (-not $env:TDESKTOP_API_ID) {
+            throw "Missing TDESKTOP_API_ID secret."
+          }
+          if (-not $env:TDESKTOP_API_HASH) {
+            throw "Missing TDESKTOP_API_HASH secret."
+          }
+
+          function Write-RunnerResources($label) {
+            $os = Get-CimInstance Win32_OperatingSystem
+            $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+            $pageFiles = Get-CimInstance Win32_PageFileUsage
+            $buildProcesses = Get-Process cl, link, MSBuild, cmake -ErrorAction SilentlyContinue |
+              Group-Object ProcessName |
+              Sort-Object Name |
+              Select-Object Name, Count
+            Write-Host "===== runner resources: $label ====="
+            [pscustomobject]@{
+              FreePhysicalMB = [math]::Round($os.FreePhysicalMemory / 1024)
+              TotalVirtualMB = [math]::Round($os.TotalVirtualMemorySize / 1024)
+              FreeVirtualMB = [math]::Round($os.FreeVirtualMemory / 1024)
+              CFreeGB = [math]::Round($disk.FreeSpace / 1GB, 2)
+            } | Format-List | Out-String | Write-Host
+            $pageFiles | Select-Object Name, AllocatedBaseSize, CurrentUsage, PeakUsage | Format-Table -AutoSize | Out-String | Write-Host
+            $buildProcesses | Format-Table -AutoSize | Out-String | Write-Host
+          }
+
+          $telegramPath = Join-Path $env:TBUILD "$env:REPO_NAME\Telegram"
+          $exitCode = 0
+          Push-Location $telegramPath
+          try {
+            & .\configure.bat `
+              x64 `
+              qt6 `
+              -D "TDESKTOP_API_ID=$env:TDESKTOP_API_ID" `
+              -D "TDESKTOP_API_HASH=$env:TDESKTOP_API_HASH" `
+              -D "CMAKE_CONFIGURATION_TYPES=Release" `
+              -D "CMAKE_COMPILE_WARNING_AS_ERROR=ON" `
+              -D "DESKTOP_APP_ENABLE_LTO=ON" `
+              -D "DESKTOP_APP_DISABLE_AUTOUPDATE=OFF" `
+              -D "DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF"
+            if ($LASTEXITCODE -ne 0) {
+              $exitCode = $LASTEXITCODE
+            } else {
+              Write-RunnerResources "before build"
+              $build = Start-Process `
+                -FilePath "cmake" `
+                -ArgumentList @("--build", "..\out", "--config", "Release", "--target", "Telegram", "--parallel") `
+                -NoNewWindow `
+                -PassThru
+              while (-not $build.HasExited) {
+                Start-Sleep -Seconds 30
+                $build.Refresh()
+                Write-RunnerResources "build running"
+              }
+              $build.WaitForExit()
+              Write-RunnerResources "after build"
+              $exitCode = $build.ExitCode
+            }
+          } finally {
+            Pop-Location
+          }
+          exit $exitCode
+
+      - name: Report runner resources after build.
+        if: always()
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+          $pageFiles = Get-CimInstance Win32_PageFileUsage
+          [pscustomobject]@{
+            FreePhysicalMB = [math]::Round($os.FreePhysicalMemory / 1024)
+            TotalVirtualMB = [math]::Round($os.TotalVirtualMemorySize / 1024)
+            FreeVirtualMB = [math]::Round($os.FreeVirtualMemory / 1024)
+            CFreeGB = [math]::Round($disk.FreeSpace / 1GB, 2)
+          } | Format-List
+          $pageFiles | Select-Object Name, AllocatedBaseSize, CurrentUsage, PeakUsage | Format-Table -AutoSize
+
+      - name: Check artifact.
+        run: |
+          if not exist %TBUILD%\%REPO_NAME%\out\Release\Telegram.exe exit /b 1
+
+      - name: Pack artifact.
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:GITHUB_WORKSPACE "artifact"
+          New-Item -ItemType Directory -Path $artifact -Force | Out-Null
+          $source = Join-Path $env:TBUILD "$env:REPO_NAME\out\Release"
+          $archive = Join-Path $artifact "Telegram-Windows-x64-Qt6-Release-${{ github.run_number }}.7z"
+          $versionFile = Join-Path $env:TBUILD "$env:REPO_NAME\Telegram\build\version"
+          $version = (Select-String -Path $versionFile -Pattern '^AppVersionStr\s+(.+)$').Matches.Groups[1].Value
+          if (-not $version) {
+            throw "Could not read AppVersionStr from $versionFile."
+          }
+          Set-Content -Path (Join-Path $artifact "release-version.txt") -Value $version -Encoding utf8NoBOM
+
+          $files = @(
+            (Join-Path $source "Telegram.exe"),
+            (Join-Path $source "Updater.exe")
+          ) | Where-Object { Test-Path $_ }
+          if (-not $files) {
+            throw "No release files found to pack."
+          }
+
+          $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
+          if (-not $sevenZip) {
+            $sevenZip = (Get-Command 7z -ErrorAction Stop).Source
+          }
+
+          & $sevenZip a -t7z -mx=9 -mmt=on $archive @files
+          if ($LASTEXITCODE -ne 0) {
+            throw "7z failed with exit code $LASTEXITCODE."
+          }
+
+          $archives = @(Get-ChildItem $artifact -File -Filter "$(Split-Path $archive -Leaf)" | Sort-Object Name)
+          if (-not $archives) {
+            throw "7z did not produce the release archive."
+          }
+          $archives | Select-Object Name, @{ Name = "SizeMB"; Expression = { [math]::Round($_.Length / 1MB, 2) } } | Format-Table -AutoSize
+
+      - name: Upload artifact.
+        uses: actions/upload-artifact@v7
+        with:
+          name: Telegram Windows x64 Qt6 Release
+          path: artifact\
+
+  telegram-upload:
+    name: Send release to Telegram
+    needs: windows-release
+    if: github.event_name == 'push' || inputs.send_to_telegram == 'true'
+    runs-on: ubuntu-latest
+
+    env:
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_BOT_API_URL: http://127.0.0.1:8081
+
+    steps:
+      - name: Download artifact.
+        uses: actions/download-artifact@v7
+        with:
+          name: Telegram Windows x64 Qt6 Release
+          path: telegram-upload
+
+      - name: Start local Telegram Bot API.
+        env:
+          TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
+          TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TDESKTOP_API_ID}" ]; then
+            echo "Missing TDESKTOP_API_ID secret." >&2
+            exit 1
+          fi
+          if [ -z "${TDESKTOP_API_HASH}" ]; then
+            echo "Missing TDESKTOP_API_HASH secret." >&2
+            exit 1
+          fi
+          if [ -z "${TG_BOT_TOKEN}" ]; then
+            echo "Missing TG_BOT_TOKEN secret." >&2
+            exit 1
+          fi
+          docker run -d \
+            --name telegram-bot-api \
+            -p 8081:8081 \
+            -e TELEGRAM_API_ID="${TDESKTOP_API_ID}" \
+            -e TELEGRAM_API_HASH="${TDESKTOP_API_HASH}" \
+            -e TELEGRAM_LOCAL=1 \
+            aiogram/telegram-bot-api:latest
+          for attempt in $(seq 1 60); do
+            if curl -fsS "${TG_BOT_API_URL}/bot${TG_BOT_TOKEN}/getMe" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs telegram-bot-api
+          exit 1
+
+      - name: Send to Telegram.
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TG_CHAT_ID}" ]; then
+            echo "Missing TG_CHAT_ID secret." >&2
+            exit 1
+          fi
+          mapfile -t files < <(find telegram-upload -maxdepth 1 -type f -name 'Telegram-Windows-x64-Qt6-Release-*.7z' | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release archive found for Telegram upload." >&2
+            exit 1
+          fi
+          count="${#files[@]}"
+          version="$(tr -d '\r\n' < telegram-upload/release-version.txt)"
+          commit_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          for index in "${!files[@]}"; do
+            file="${files[$index]}"
+            details=$'- disable anti forward\n- disable typing status\n- inlinebot rules'
+            if [ "$count" -gt 1 ]; then
+              details="${details}"$'\n'"- part $((index + 1))/$count"
+            fi
+            caption="#64Gram <a href=\"${commit_url}\">${version}</a> #Windows_x64"$'\n'"<blockquote expandable>${details}</blockquote>"
+            curl -fsS \
+              -X POST \
+              "${TG_BOT_API_URL}/bot${TG_BOT_TOKEN}/sendDocument" \
+              -F "chat_id=${TG_CHAT_ID}" \
+              -F "parse_mode=HTML" \
+              -F "caption=${caption}" \
+              -F "document=@${file}"
+          done

@@ -1,0 +1,197 @@
+name: Windows Debug
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev2
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '!docs/building-win*.md'
+      - 'changelog.txt'
+      - 'LEGAL'
+      - 'LICENSE'
+      - '.github/**'
+      - 'lib/xdg/**'
+      - 'snap/**'
+      - 'Telegram/build/docker/**'
+      - 'Telegram/Resources/uwp/**'
+      - 'Telegram/SourceFiles/platform/linux/**'
+      - 'Telegram/SourceFiles/platform/mac/**'
+      - 'Telegram/Telegram/**'
+      - 'Telegram/configure.sh'
+      - 'Telegram/Telegram.plist'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '!docs/building-win*.md'
+      - 'changelog.txt'
+      - 'LEGAL'
+      - 'LICENSE'
+      - '.github/**'
+      - 'lib/xdg/**'
+      - 'snap/**'
+      - 'Telegram/build/docker/**'
+      - 'Telegram/Resources/uwp/**'
+      - 'Telegram/SourceFiles/platform/linux/**'
+      - 'Telegram/SourceFiles/platform/mac/**'
+      - 'Telegram/Telegram/**'
+      - 'Telegram/configure.sh'
+      - 'Telegram/Telegram.plist'
+
+jobs:
+  windows-debug:
+    name: Windows x64 Qt6 Debug
+    runs-on: windows-latest
+
+    env:
+      PREPARE_PATH: Telegram/build/prepare/prepare.py
+      REPO_NAME: tdesktop
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Prepare directories.
+        run: |
+          mkdir %userprofile%\TBuild\Libraries
+          mklink /d %GITHUB_WORKSPACE%\TBuild %userprofile%\TBuild
+          echo TBUILD=%GITHUB_WORKSPACE%\TBuild>>%GITHUB_ENV%
+          echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
+
+      - name: Clone.
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          path: TBuild\tdesktop
+
+      - name: First set up.
+        shell: bash
+        run: |
+          DOCPATH=$TBUILD/$REPO_NAME/docs/building-win.md
+          SDK="$(grep "SDK version" $DOCPATH | sed -r 's/.*\*\*(.*)\*\* SDK version.*/\1/')"
+          echo "SDK=$SDK" >> $GITHUB_ENV
+
+          sed -i '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/${_Zi}//' "$PROGRAMFILES"/CMake/share/cmake*/Modules/Platform/Windows-MSVC.cmake
+
+          echo "$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> CACHE_KEY.txt
+          echo "$SDK" >> CACHE_KEY.txt
+          echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
+
+      - name: Native Tools Command Prompt.
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+          sdk: ${{ env.SDK }}
+
+      - name: NuGet sources.
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages"
+          nuget sources Add -Source https://api.nuget.org/v3/index.json & exit 0
+
+      - name: ThirdParty cache.
+        id: third-party-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-${{ runner.arch }}-third-party-
+
+      - name: Libraries cache.
+        id: libraries-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-libs-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-libs-
+
+      - name: Qt cache.
+        id: qt-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-qt6-
+
+      - name: Libraries.
+        env:
+          GYP_MSVS_OVERRIDE_PATH: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\'
+          GYP_MSVS_VERSION: 2022
+        run: |
+          %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent qt6
+
+      - name: Free up some disk space.
+        shell: bash
+        run: find $LibrariesPath '(' '(' ! '(' -name '*.lib' -o -name '*.a' -o -name '*.exe' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -name Makefile -o -name '*.pc.in' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' ')' -type f ')' -o -empty ')' -delete
+
+      - name: Save ThirdParty cache.
+        if: steps.third-party-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: ${{ env.TBUILD }}\ThirdParty
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
+
+      - name: Save Libraries cache.
+        if: steps.libraries-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\*
+            !${{ env.LibrariesPath }}\cache_keys
+            !${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\*
+            !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-libs-${{ env.CACHE_KEY }}
+
+      - name: Save Qt cache.
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: |
+            ${{ env.LibrariesPath }}\[qQ]t[_-]*
+            ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
+          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}
+
+      - name: Telegram Desktop build.
+        run: |
+          cd %TBUILD%\%REPO_NAME%\Telegram
+
+          call configure.bat ^
+          x64 ^
+          qt6 ^
+          -D TDESKTOP_API_TEST=ON ^
+          -D CMAKE_CONFIGURATION_TYPES=Debug ^
+          -D CMAKE_COMPILE_WARNING_AS_ERROR=ON ^
+          -D CMAKE_MSVC_DEBUG_INFORMATION_FORMAT= ^
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=OFF ^
+          -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF
+
+          cmake --build ..\out --config Debug --target Telegram --parallel
+
+      - name: Check artifact.
+        run: |
+          if not exist %TBUILD%\%REPO_NAME%\out\Debug\Telegram.exe exit /b 1
+
+      - name: Move artifact.
+        run: |
+          mkdir artifact
+          move %TBUILD%\%REPO_NAME%\out\Debug\Telegram.exe artifact\
+
+      - name: Upload artifact.
+        uses: actions/upload-artifact@v7
+        with:
+          name: Telegram Windows x64 Qt6 Debug
+          path: artifact\

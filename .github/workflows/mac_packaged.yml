@@ -2,6 +2,8 @@ name: MacOS Packaged.
 
 on:
   push:
+    branches-ignore:
+      - dev2
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -19,6 +21,8 @@ on:
       - 'Telegram/SourceFiles/platform/linux/**'
       - 'Telegram/configure.bat'
   pull_request:
+    branches-ignore:
+      - dev2
     paths-ignore:
       - 'docs/**'
       - '**.md'
