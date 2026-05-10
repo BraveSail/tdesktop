@@ -3,8 +3,6 @@ name: Waiting for answer.
 on:
   issue_comment:
     types: [created]
-  schedule:
-    - cron: '30 0 * * *'
 
 jobs:
   waiting-for-answer:
