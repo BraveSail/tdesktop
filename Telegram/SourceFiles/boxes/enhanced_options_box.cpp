@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/boxes/confirm_box.h"
 #include "core/application.h"
 #include "core/enhanced_settings.h"
+#include "lang/translate_provider.h"
 #include "settings/settings_enhanced.h"
 
 NetBoostBox::NetBoostBox(QWidget *parent) {
@@ -127,6 +128,133 @@ QString AlwaysDeleteBox::DeleteLabel(int boost) {
 
 void AlwaysDeleteBox::save() {
 	SetEnhancedValue("always_delete_for", _optionGroup->current());
+	EnhancedSettings::Write();
+	closeBox();
+}
+
+TranslationSourceBox::TranslationSourceBox(QWidget *parent) {
+}
+
+void TranslationSourceBox::prepare() {
+	setTitle(tr::lng_settings_translation_source());
+
+	addButton(tr::lng_box_ok(), [=] { closeBox(); });
+
+	auto y = st::boxOptionListPadding.top();
+	_sourceGroup = std::make_shared<Ui::RadiobuttonGroup>(
+		int(Ui::CurrentTranslateSource()));
+
+	for (const auto source : {
+			Ui::TranslateSource::Google,
+			Ui::TranslateSource::Telegram,
+			Ui::TranslateSource::LLM,
+		}) {
+		const auto button = Ui::CreateChild<Ui::Radiobutton>(
+			this,
+			_sourceGroup,
+			int(source),
+			Ui::TranslateSourceLabel(source),
+			st::autolockButton);
+		button->moveToLeft(st::boxPadding.left(), y);
+		y += button->heightNoMargins() + st::boxOptionListSkip;
+	}
+	_sourceGroup->setChangedCallback([=](int) { save(); });
+	setDimensions(st::boxWidth, y);
+}
+
+void TranslationSourceBox::save() {
+	switch (_sourceGroup->current()) {
+	case int(Ui::TranslateSource::Telegram):
+		Ui::SetTranslateSource(Ui::TranslateSource::Telegram);
+		break;
+	case int(Ui::TranslateSource::LLM):
+		Ui::SetTranslateSource(Ui::TranslateSource::LLM);
+		break;
+	default:
+		Ui::SetTranslateSource(Ui::TranslateSource::Google);
+		break;
+	}
+	closeBox();
+}
+
+LlmTranslatorBox::LlmTranslatorBox(QWidget *parent)
+: _url(this, st::defaultInputField, tr::lng_settings_llm_api_url())
+, _keys(this, st::defaultInputField, tr::lng_settings_llm_api_keys())
+, _model(this, st::defaultInputField, tr::lng_settings_llm_model())
+, _temperature(this, st::defaultInputField, tr::lng_settings_llm_temperature())
+, _systemPrompt(this, st::defaultInputField, tr::lng_settings_llm_system_prompt()) {
+}
+
+void LlmTranslatorBox::prepare() {
+	setTitle(tr::lng_settings_llm_translator());
+
+	addButton(tr::lng_settings_save(), [=] { save(); });
+	addButton(tr::lng_cancel(), [=] { closeBox(); });
+
+	_url->setText(GetEnhancedString("llm_api_url").isEmpty()
+		? u"https://api.openai.com/v1"_q
+		: GetEnhancedString("llm_api_url"));
+	_keys->setText(GetEnhancedString("llm_api_keys"));
+	_model->setText(GetEnhancedString("llm_model").isEmpty()
+		? u"gpt-4.1-mini"_q
+		: GetEnhancedString("llm_model"));
+	_temperature->setText(GetEnhancedString("llm_temperature").isEmpty()
+		? u"0.7"_q
+		: GetEnhancedString("llm_temperature"));
+	_systemPrompt->setText(GetEnhancedString("llm_system_prompt"));
+
+	setDimensions(st::boxWidth, contentHeight());
+}
+
+void LlmTranslatorBox::resizeEvent(QResizeEvent *e) {
+	BoxContent::resizeEvent(e);
+
+	const auto width = st::boxWidth
+		- st::boxPadding.left()
+		- st::boxPadding.right();
+	auto y = st::boxPadding.top();
+	for (const auto field : {
+			_url.data(),
+			_keys.data(),
+			_model.data(),
+			_temperature.data(),
+			_systemPrompt.data(),
+		}) {
+		field->resize(width, field->height());
+		field->moveToLeft(st::boxPadding.left(), y);
+		y += field->height() + st::boxMediumSkip;
+	}
+}
+
+void LlmTranslatorBox::setInnerFocus() {
+	_url->setFocusFast();
+}
+
+int LlmTranslatorBox::contentHeight() const {
+	return st::boxPadding.top()
+		+ (_url->height() * 5)
+		+ (st::boxMediumSkip * 4)
+		+ st::boxPadding.bottom();
+}
+
+void LlmTranslatorBox::save() {
+	auto url = _url->getLastText().trimmed();
+	if (url.isEmpty()) {
+		url = u"https://api.openai.com/v1"_q;
+	}
+	auto model = _model->getLastText().trimmed();
+	if (model.isEmpty()) {
+		model = u"gpt-4.1-mini"_q;
+	}
+	auto temperature = _temperature->getLastText().trimmed();
+	if (temperature.isEmpty()) {
+		temperature = u"0.7"_q;
+	}
+	SetEnhancedValue("llm_api_url", url);
+	SetEnhancedValue("llm_api_keys", _keys->getLastText().trimmed());
+	SetEnhancedValue("llm_model", model);
+	SetEnhancedValue("llm_temperature", temperature);
+	SetEnhancedValue("llm_system_prompt", _systemPrompt->getLastText());
 	EnhancedSettings::Write();
 	closeBox();
 }

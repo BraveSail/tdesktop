@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -58,6 +58,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
 #include "ui/widgets/pill_tabs.h"
+#include "menu/menu_checked_action.h"
 #include "menu/menu_item_download_files.h"
 #include "menu/menu_item_rate_transcribe.h"
 #include "menu/menu_item_rate_transcribe_session.h"
@@ -101,6 +102,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "lang/lang_keys.h"
+#include "lang/translate_provider.h"
 #include "core/application.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
@@ -126,6 +128,28 @@ namespace {
 constexpr auto kRescheduleLimit = 20;
 constexpr auto kTagNameLimit = 12;
 constexpr auto kPublicPostLinkToastDuration = 4 * crl::time(1000);
+
+void AddTranslateSourceMenu(
+		not_null<Ui::PopupMenu*> menu,
+		QWidget *parent) {
+	auto submenu = std::make_unique<Ui::PopupMenu>(parent, st::popupMenuWithIcons);
+	const auto current = Ui::CurrentTranslateSource();
+	const auto add = [&](Ui::TranslateSource source) {
+		Menu::AddCheckedAction(
+			submenu.get(),
+			Ui::TranslateSourceLabel(source),
+			[=] { Ui::SetTranslateSource(source); },
+			nullptr,
+			current == source);
+	};
+	add(Ui::TranslateSource::Google);
+	add(Ui::TranslateSource::Telegram);
+	add(Ui::TranslateSource::LLM);
+	menu->addAction(
+		tr::lng_settings_translation_source(tr::now),
+		std::move(submenu),
+		&st::menuIconTranslate);
+}
 
 bool HasEditMessageAction(
 		const ContextMenuRequest &request,
@@ -1706,6 +1730,7 @@ void FillContextMenuItems(
 					list->hasCopyRestrictionForSelected()));
 			}
 		}, &st::menuIconTranslate);
+		AddTranslateSourceMenu(result, list);
 	}
 
 	AddTopMessageActions(result, request, list);
@@ -1757,16 +1782,25 @@ void FillContextMenuItems(
 				&& !Ui::SkipTranslate(translate)) {
 				result->addAction(tr::lng_context_translate(tr::now), [=] {
 					if (const auto item = owner->message(itemId)) {
-						list->controller()->show(Box(
-							Ui::TranslateBox,
-							item->history()->peer,
-							mediaHasTextForCopy
-								? MsgId()
-								: item->fullId().msg,
-							translate,
-							list->hasCopyRestriction(view->data())));
+						if (GetEnhancedBool("translate_in_message")
+							&& !mediaHasTextForCopy) {
+							Ui::TranslateMessageInline(
+								item->history()->peer,
+								item->fullId().msg,
+								translate);
+						} else {
+							list->controller()->show(Box(
+								Ui::TranslateBox,
+								item->history()->peer,
+								mediaHasTextForCopy
+									? MsgId()
+									: item->fullId().msg,
+								translate,
+								list->hasCopyRestriction(view->data())));
+						}
 					}
 				}, &st::menuIconTranslate);
+				AddTranslateSourceMenu(result, list);
 			}
 		}
 	}
@@ -2196,6 +2230,7 @@ void AddPollActions(
 					std::move(text),
 					item->forbidsForward()));
 			}, &st::menuIconTranslate);
+			AddTranslateSourceMenu(menu, menu.get());
 		}
 	}
 	if ((context != Context::History)

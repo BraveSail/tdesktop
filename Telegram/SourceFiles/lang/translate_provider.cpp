@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/translate_provider.h"
 
 #include "base/options.h"
+#include "core/enhanced_settings.h"
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "data/data_msg_id.h"
@@ -16,7 +17,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "lang/translate_mtproto_provider.h"
 #include "lang/translate_url_provider.h"
+#include "lang/lang_keys.h"
 #include "platform/platform_translate_provider.h"
+#include "settings.h"
 
 namespace {
 
@@ -30,6 +33,50 @@ base::options::option<QString> OptionTranslateUrlTemplate({
 } // namespace
 
 namespace Ui {
+
+TranslateSource CurrentTranslateSource() {
+	const auto value = GetEnhancedInt("translation_provider");
+	switch (value) {
+	case int(TranslateSource::Telegram):
+		return TranslateSource::Telegram;
+	case int(TranslateSource::LLM):
+		return TranslateSource::LLM;
+	default:
+		return TranslateSource::Google;
+	}
+}
+
+QString TranslateSourceLabel(TranslateSource source) {
+	switch (source) {
+	case TranslateSource::LLM:
+		return tr::lng_translation_source_llm(tr::now);
+	case TranslateSource::Telegram:
+		return tr::lng_translation_source_telegram(tr::now);
+	case TranslateSource::Google:
+		return tr::lng_translation_source_google(tr::now);
+	}
+	Unexpected("Source in TranslateSourceLabel.");
+}
+
+void SetTranslateSource(TranslateSource source) {
+	SetEnhancedValue("translation_provider", int(source));
+	EnhancedSettings::Write();
+}
+
+void SwitchTranslateSource() {
+	switch (CurrentTranslateSource()) {
+	case TranslateSource::Google:
+		SetTranslateSource(TranslateSource::Telegram);
+		return;
+	case TranslateSource::Telegram:
+		SetTranslateSource(TranslateSource::LLM);
+		return;
+	case TranslateSource::LLM:
+		SetTranslateSource(TranslateSource::Google);
+		return;
+	}
+	Unexpected("Source in SwitchTranslateSource.");
+}
 
 std::unique_ptr<TranslateProvider> CreateTranslateProvider(
 		not_null<Main::Session*> session) {

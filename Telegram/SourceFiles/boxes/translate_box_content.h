@@ -33,7 +33,9 @@ struct TranslateBoxContentArgs {
 	bool hasCopyRestriction = false;
 	Text::MarkedContext textContext;
 	rpl::producer<LanguageId> to;
+	rpl::producer<QString> source;
 	Fn<void()> chooseTo;
+	Fn<void()> switchSource;
 	Fn<void(LanguageId, Fn<void(TranslateBoxContentResult)>)> request;
 };
 

@@ -87,11 +87,15 @@ void TranslateBoxContent(
 	const auto textContext = std::move(args.textContext);
 	const auto chooseTo = std::make_shared<Fn<void()>>(
 		std::move(args.chooseTo));
+	const auto switchSource = std::make_shared<Fn<void()>>(
+		std::move(args.switchSource));
 	const auto request = std::make_shared<
 		Fn<void(LanguageId, Fn<void(TranslateBoxContentResult)>)>>(
 			std::move(args.request));
 
 	auto to = std::move(args.to) | rpl::start_spawning(box->lifetime());
+	auto source = std::move(args.source)
+		| rpl::start_spawning(box->lifetime());
 	const auto toTitle = rpl::duplicate(to) | rpl::map(LanguageName);
 	const auto toDirection = rpl::duplicate(to) | rpl::map([=](
 			LanguageId id) {
@@ -213,6 +217,10 @@ void TranslateBoxContent(
 			return;
 		}
 		(*chooseTo)();
+	});
+	box->addLeftButton(std::move(source), [=] {
+		(*switchSource)();
+		send(to.current());
 	});
 }
 

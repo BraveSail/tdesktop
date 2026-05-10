@@ -32,6 +32,7 @@ https://github.com/TDesktop-x64/tdesktop/blob/dev/LEGAL
 #include "window/window_session_controller.h"
 #include "lang/lang_keys.h"
 #include "lang/lang_instance.h"
+#include "lang/translate_provider.h"
 #include "core/update_checker.h"
 #include "core/enhanced_settings.h"
 #include "core/application.h"
@@ -621,6 +622,51 @@ void AddPrefToggle(
 				EnhancedSettings::Write();
 			}, container->lifetime());
 		}
+
+		AddButtonWithIcon(
+				inner,
+				tr::lng_settings_translate_in_message(),
+				st::settingsButtonNoIcon
+		)->toggleOn(
+				rpl::single(GetEnhancedBool("translate_in_message"))
+		)->toggledChanges(
+		) | rpl::filter([=](bool toggled) {
+			return (toggled != GetEnhancedBool("translate_in_message"));
+		}) | rpl::on_next([=](bool toggled) {
+			SetEnhancedValue("translate_in_message", toggled);
+			EnhancedSettings::Write();
+		}, container->lifetime());
+
+		auto translationSource = rpl::single(
+			Ui::TranslateSourceLabel(Ui::CurrentTranslateSource())
+		) | rpl::then(
+			_TranslationSourceChanged.events()
+		) | rpl::map([] {
+			return Ui::TranslateSourceLabel(Ui::CurrentTranslateSource());
+		});
+
+		auto translationSourceButton = AddButtonWithLabel(
+			inner,
+			tr::lng_settings_translation_source(),
+			std::move(translationSource),
+			st::settingsButtonNoIcon);
+		translationSourceButton->events(
+		) | rpl::on_next([=](not_null<QEvent*> e) {
+			if (e->type() == QEvent::UpdateLater) {
+				_TranslationSourceChanged.fire({});
+			}
+		}, container->lifetime());
+		translationSourceButton->addClickHandler([=] {
+			Ui::show(Box<TranslationSourceBox>());
+		});
+
+		auto llmSettingsButton = AddButtonWithIcon(
+			inner,
+			tr::lng_settings_llm_translator(),
+			st::settingsButtonNoIcon);
+		llmSettingsButton->addClickHandler([=] {
+			Ui::show(Box<LlmTranslatorBox>());
+		});
 
 		auto secondsBtn = AddButtonWithIcon(
 			inner,

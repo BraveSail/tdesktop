@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "history/history.h"
+#include "history/history_item.h"
 #include "lang/lang_instance.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
@@ -23,7 +24,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/layers/generic_box.h"
 #include "ui/widgets/multi_select.h"
 #include "ui/text/text_utilities.h"
-#include "GoogleAppTranslator.h"
 
 namespace Ui {
 namespace {
@@ -45,9 +45,11 @@ void TranslateBox(
 
 		std::unique_ptr<TranslateProvider> provider;
 		rpl::variable<LanguageId> to;
+		rpl::variable<QString> source;
 	};
 	const auto state = box->lifetime().make_state<State>(&peer->session());
 	state->to = ChooseTranslateTo(peer->owner().history(peer));
+	state->source = TranslateSourceLabel(CurrentTranslateSource());
 	const auto request = std::make_shared<TranslateProviderRequest>(
 		PrepareTranslateProviderRequest(
 			state->provider.get(),
@@ -60,10 +62,15 @@ void TranslateBox(
 		.hasCopyRestriction = hasCopyRestriction,
 		.textContext = Core::TextContext({ .session = &peer->session() }),
 		.to = state->to.value(),
+		.source = state->source.value(),
 		.chooseTo = [=] {
 			box->uiShow()->showBox(ChooseTranslateToBox(
 				state->to.current(),
 				crl::guard(box, [=](LanguageId id) { state->to = id; })));
+		},
+		.switchSource = [=] {
+			SwitchTranslateSource();
+			state->source = TranslateSourceLabel(CurrentTranslateSource());
 		},
 		.request = [=](
 				LanguageId to,
@@ -86,6 +93,44 @@ void TranslateBox(
 				});
 		},
 	});
+}
+
+void TranslateMessageInline(
+		not_null<PeerData*> peer,
+		MsgId msgId,
+		TextWithEntities text) {
+	if (!msgId || text.text.isEmpty()) {
+		return;
+	}
+	const auto provider = std::shared_ptr<TranslateProvider>(
+		CreateTranslateProvider(&peer->session()).release());
+	auto request = PrepareTranslateProviderRequest(
+		provider.get(),
+		peer,
+		msgId,
+		std::move(text));
+	if (request.text.text.isEmpty()) {
+		return;
+	}
+	const auto history = peer->owner().history(peer);
+	const auto to = ChooseTranslateTo(history);
+	auto from = Platform::Language::Recognize(request.text.text);
+	if (!from.known() || from == to) {
+		from = LanguageId{ QLocale::English };
+	}
+	history->translateOfferFrom(from);
+	history->translateTo(to);
+	const auto itemId = FullMsgId(peer->id, msgId);
+	provider->request(
+		std::move(request),
+		to,
+		[=, owner = &peer->owner()](TranslateProviderResult result) {
+			if (const auto item = owner->message(itemId)) {
+				item->translationDone(
+					to,
+					result.text.value_or(TextWithEntities()));
+			}
+		});
 }
 
 bool SkipTranslate(TextWithEntities textWithEntities) {

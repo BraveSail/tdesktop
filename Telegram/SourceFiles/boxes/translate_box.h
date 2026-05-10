@@ -25,6 +25,11 @@ void TranslateBox(
 	TextWithEntities text,
 	bool hasCopyRestriction);
 
+void TranslateMessageInline(
+	not_null<PeerData*> peer,
+	MsgId msgId,
+	TextWithEntities text);
+
 [[nodiscard]] bool SkipTranslate(TextWithEntities textWithEntities);
 
 [[nodiscard]] object_ptr<BoxContent> EditSkipTranslationLanguages();

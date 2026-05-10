@@ -207,6 +207,21 @@ namespace EnhancedSettings {
 			}
 		});
 
+		ReadOption(settings, "translation_provider", [&](auto v) {
+			if (v.isDouble()) {
+				const auto value = v.toInt();
+				if (value != 8 && value != 10) {
+					gEnhancedOptions.insert("translation_provider", 1);
+				}
+			}
+		});
+		if (!gEnhancedOptions.contains("translation_provider")
+			|| (GetEnhancedInt("translation_provider") != 1
+				&& GetEnhancedInt("translation_provider") != 8
+				&& GetEnhancedInt("translation_provider") != 10)) {
+			gEnhancedOptions.insert("translation_provider", 1);
+		}
+
 		ReadStringOption(settings, "radio_controller", [&](auto v) {
 			if (v.isEmpty()) {
 				SetEnhancedValue("radio_controller", "http://localhost:2468");
@@ -315,6 +330,13 @@ namespace EnhancedSettings {
 		settings.insert(qsl("show_json"), false);
 		settings.insert(qsl("hide_counter"), false);
 		settings.insert(qsl("translate_to_tc"), false);
+		settings.insert(qsl("translate_in_message"), false);
+		settings.insert(qsl("translation_provider"), 1);
+		settings.insert(qsl("llm_api_url"), "https://api.openai.com/v1");
+		settings.insert(qsl("llm_api_keys"), "");
+		settings.insert(qsl("llm_model"), "gpt-4.1-mini");
+		settings.insert(qsl("llm_temperature"), "0.7");
+		settings.insert(qsl("llm_system_prompt"), "");
 		settings.insert(qsl("hide_stories"), false);
 		settings.insert(qsl("screenshot_mode"), false);
 		settings.insert(qsl("update_url"), "");
@@ -369,6 +391,13 @@ namespace EnhancedSettings {
 		settings.insert(qsl("show_json"), GetEnhancedBool("show_json"));
 		settings.insert(qsl("hide_counter"), GetEnhancedBool("hide_counter"));
 		settings.insert(qsl("translate_to_tc"), GetEnhancedBool("translate_to_tc"));
+		settings.insert(qsl("translate_in_message"), GetEnhancedBool("translate_in_message"));
+		settings.insert(qsl("translation_provider"), GetEnhancedInt("translation_provider"));
+		settings.insert(qsl("llm_api_url"), GetEnhancedString("llm_api_url"));
+		settings.insert(qsl("llm_api_keys"), GetEnhancedString("llm_api_keys"));
+		settings.insert(qsl("llm_model"), GetEnhancedString("llm_model"));
+		settings.insert(qsl("llm_temperature"), GetEnhancedString("llm_temperature"));
+		settings.insert(qsl("llm_system_prompt"), GetEnhancedString("llm_system_prompt"));
 		settings.insert(qsl("hide_stories"), GetEnhancedBool("hide_stories"));
 		settings.insert(qsl("screenshot_mode"), GetEnhancedBool("screenshot_mode"));
 		settings.insert(qsl("update_url"), GetEnhancedString("update_url"));

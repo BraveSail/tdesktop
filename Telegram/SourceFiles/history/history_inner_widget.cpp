@@ -3455,12 +3455,20 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 						if (!translate.text.isEmpty()
 							&& !Ui::SkipTranslate(translate)) {
 							_menu->addAction(tr::lng_context_translate(tr::now), [=] {
-								_controller->show(Box(
-									Ui::TranslateBox,
-									peer,
-									mediaHasTextForCopy ? MsgId() : itemId,
-									translate,
-									hasRestriction));
+								if (GetEnhancedBool("translate_in_message")
+									&& !mediaHasTextForCopy) {
+									Ui::TranslateMessageInline(
+										peer,
+										itemId,
+										translate);
+								} else {
+									_controller->show(Box(
+										Ui::TranslateBox,
+										peer,
+										mediaHasTextForCopy ? MsgId() : itemId,
+										translate,
+										hasRestriction));
+								}
 							}, &st::menuIconTranslate);
 						}
 					}

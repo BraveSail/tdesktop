@@ -18,6 +18,17 @@ class Session;
 
 namespace Ui {
 
+enum class TranslateSource {
+	Google = 1,
+	Telegram = 8,
+	LLM = 10,
+};
+
+[[nodiscard]] TranslateSource CurrentTranslateSource();
+[[nodiscard]] QString TranslateSourceLabel(TranslateSource source);
+void SetTranslateSource(TranslateSource source);
+void SwitchTranslateSource();
+
 [[nodiscard]] std::unique_ptr<TranslateProvider> CreateTranslateProvider(
 	not_null<Main::Session*> session);
 

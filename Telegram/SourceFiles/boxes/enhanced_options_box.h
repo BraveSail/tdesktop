@@ -53,6 +53,44 @@ private:
 
 };
 
+class TranslationSourceBox : public Ui::BoxContent {
+public:
+	TranslationSourceBox(QWidget *parent);
+
+protected:
+	void prepare() override;
+
+private:
+	void save();
+
+	std::shared_ptr<Ui::RadiobuttonGroup> _sourceGroup;
+
+};
+
+class LlmTranslatorBox : public Ui::BoxContent {
+public:
+	LlmTranslatorBox(QWidget *parent);
+
+protected:
+	void prepare() override;
+
+	void setInnerFocus() override;
+
+	void resizeEvent(QResizeEvent *e) override;
+
+private:
+	[[nodiscard]] int contentHeight() const;
+
+	void save();
+
+	object_ptr<Ui::InputField> _url = {nullptr};
+	object_ptr<Ui::InputField> _keys = {nullptr};
+	object_ptr<Ui::InputField> _model = {nullptr};
+	object_ptr<Ui::InputField> _temperature = {nullptr};
+	object_ptr<Ui::InputField> _systemPrompt = {nullptr};
+
+};
+
 class RadioController : public Ui::BoxContent {
 public:
 	RadioController(QWidget *parent);

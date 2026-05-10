@@ -8032,6 +8032,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_hide_counter" = "Hide online users counter";
 "lng_settings_hide_stories" = "Hide Stories";
 "lng_settings_translate_to_tc" = "使用正體中文翻譯訊息";
+"lng_settings_translation_source" = "Translation source";
+"lng_settings_translate_in_message" = "Translate messages inline";
+"lng_settings_llm_translator" = "LLM translator settings";
+"lng_settings_llm_api_url" = "API URL";
+"lng_settings_llm_api_keys" = "API keys";
+"lng_settings_llm_model" = "Model";
+"lng_settings_llm_temperature" = "Temperature";
+"lng_settings_llm_system_prompt" = "System prompt";
+"lng_translation_source_google" = "Google";
+"lng_translation_source_telegram" = "Telegram API";
+"lng_translation_source_llm" = "LLM";
 "lng_settings_screen_shot_mode" = "Screenshot Mode";
 "lng_settings_restart_hint" = "WARNING: Changing options that are colored in red will take effect only after the app restarts.";
 
