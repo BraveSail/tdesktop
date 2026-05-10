@@ -1834,10 +1834,11 @@ void ProxiesBoxController::ShowApplyConfirmation(
 				} else {
 					box->uiShow()->showBox(Ui::MakeConfirmBox({
 						.text = tr::lng_proxy_check_ip_warning(),
-						.confirmed = [=] {
+						.confirmed = [=](Fn<void()> close) {
 							auto &proxy = Core::App().settings().proxy();
 							proxy.setCheckIpWarningShown(true);
 							Local::writeSettings();
+							close();
 							runCheck();
 						},
 						.confirmText = tr::lng_proxy_check_ip_proceed(),
