@@ -186,6 +186,7 @@ void TranslateBoxContent(
 
 	struct State {
 		int requestId = 0;
+		LanguageId currentTo;
 	};
 	const auto state = box->lifetime().make_state<State>();
 
@@ -210,7 +211,10 @@ void TranslateBoxContent(
 			showText(std::move(result));
 		});
 	};
-	std::move(to) | rpl::on_next(send, box->lifetime());
+	std::move(to) | rpl::on_next([=](LanguageId id) {
+		state->currentTo = id;
+		send(id);
+	}, box->lifetime());
 
 	box->addLeftButton(tr::lng_settings_language(), [=] {
 		if (loading->toggled()) {
@@ -220,7 +224,9 @@ void TranslateBoxContent(
 	});
 	box->addLeftButton(std::move(source), [=] {
 		(*switchSource)();
-		send(to.current());
+		if (state->currentTo) {
+			send(state->currentTo);
+		}
 	});
 }
 
