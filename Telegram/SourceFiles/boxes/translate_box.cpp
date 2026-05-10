@@ -120,13 +120,14 @@ void TranslateMessageInline(
 	}
 	const auto history = peer->owner().history(peer);
 	const auto to = ChooseTranslateTo(history);
-	auto from = Platform::Language::Recognize(request.text.text);
-	if (!from.known() || from == to) {
-		from = LanguageId{ QLocale::English };
-	}
-	history->translateOfferFrom(from);
-	history->translateTo(to);
 	const auto itemId = FullMsgId(peer->id, msgId);
+	if (const auto item = peer->owner().message(itemId)) {
+		if (!item->translationShowRequiresRequest(to)) {
+			return;
+		}
+	} else {
+		return;
+	}
 	auto original = request.text;
 	provider->request(
 		std::move(request),
@@ -140,7 +141,8 @@ void TranslateMessageInline(
 						? InlineTranslationText(
 							std::move(original),
 							std::move(*result.text))
-						: TextWithEntities());
+						: TextWithEntities(),
+					true);
 			}
 		});
 }

@@ -479,7 +479,7 @@ public:
 	[[nodiscard]] const HistoryMessageTranslation *translation() const;
 	[[nodiscard]] bool translationShowRequiresCheck(LanguageId to) const;
 	bool translationShowRequiresRequest(LanguageId to);
-	void translationDone(LanguageId to, TextWithEntities result);
+	void translationDone(LanguageId to, TextWithEntities result, bool show = false);
 
 	[[nodiscard]] bool canReact() const;
 	void toggleReaction(

@@ -3153,13 +3153,16 @@ void HistoryItem::translationToggle(
 	}
 }
 
-void HistoryItem::translationDone(LanguageId to, TextWithEntities result) {
+void HistoryItem::translationDone(
+		LanguageId to,
+		TextWithEntities result,
+		bool show) {
 	const auto set = [&](not_null<HistoryMessageTranslation*> translation) {
 		if (result.empty()) {
 			translation->failed = true;
 		} else {
 			translation->text = std::move(result);
-			if (_history->translatedTo() == to) {
+			if (show || (_history->translatedTo() == to)) {
 				translationToggle(translation, true);
 			}
 		}
@@ -3560,7 +3563,8 @@ const TextWithEntities &HistoryItem::translatedText() const {
 	} else if (const auto translation = this->translation()
 		; translation
 		&& translation->used
-		&& (translation->to == history()->translatedTo())) {
+		&& (translation->to == history()->translatedTo()
+			|| !history()->translatedTo())) {
 		return translation->text;
 	} else {
 		return originalText();
