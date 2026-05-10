@@ -51,6 +51,7 @@ private:
 	QPointer<Ui::RpWidget> _translateChatsToggle;
 	QPointer<Ui::RpWidget> _doNotTranslateButton;
 	rpl::event_stream<bool> _translateChatTurnOff;
+	rpl::event_stream<QString> _translationSourceChanged;
 	Fn<void()> _setInnerFocus;
 	Fn<Ui::ScrollToRequest(int rows)> _jump;
 

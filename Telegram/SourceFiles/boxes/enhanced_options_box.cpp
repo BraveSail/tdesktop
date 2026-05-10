@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/enhanced_settings.h"
 #include "lang/translate_provider.h"
+#include "lang/translate_mtproto_provider.h"
 #include "settings/settings_enhanced.h"
 
 NetBoostBox::NetBoostBox(QWidget *parent) {
@@ -190,6 +191,7 @@ void LlmTranslatorBox::prepare() {
 
 	addButton(tr::lng_settings_save(), [=] { save(); });
 	addButton(tr::lng_cancel(), [=] { closeBox(); });
+	addLeftButton(tr::lng_settings_llm_test_connection(), [=] { test(); });
 
 	_url->setText(GetEnhancedString("llm_api_url").isEmpty()
 		? u"https://api.openai.com/v1"_q
@@ -237,7 +239,7 @@ int LlmTranslatorBox::contentHeight() const {
 		+ st::boxPadding.bottom();
 }
 
-void LlmTranslatorBox::save() {
+void LlmTranslatorBox::saveFields() {
 	auto url = _url->getLastText().trimmed();
 	if (url.isEmpty()) {
 		url = u"https://api.openai.com/v1"_q;
@@ -256,7 +258,32 @@ void LlmTranslatorBox::save() {
 	SetEnhancedValue("llm_temperature", temperature);
 	SetEnhancedValue("llm_system_prompt", _systemPrompt->getLastText());
 	EnhancedSettings::Write();
+}
+
+void LlmTranslatorBox::save() {
+	saveFields();
 	closeBox();
+}
+
+void LlmTranslatorBox::test() {
+	saveFields();
+	showToast(tr::lng_settings_llm_testing(tr::now));
+	Ui::TestLlmTranslator([=, weak = base::make_weak(this)](QString error) {
+		const auto strong = weak.get();
+		if (!strong) {
+			return;
+		} else if (error.isEmpty()) {
+			strong->showToast(tr::lng_settings_llm_test_success(tr::now));
+		} else {
+			if (error.size() > 100) {
+				error = error.mid(0, 100) + u"..."_q;
+			}
+			strong->showToast(tr::lng_settings_llm_test_failed(
+				tr::now,
+				lt_error,
+				error));
+		}
+	});
 }
 
 RadioController::RadioController(QWidget *parent)

@@ -30,6 +30,12 @@ namespace {
 
 constexpr auto kSkipAtLeastOneDuration = 3 * crl::time(1000);
 
+[[nodiscard]] TextWithEntities InlineTranslationText(
+		TextWithEntities original,
+		TextWithEntities translated) {
+	return original.append(u"\n\n-----\n\n"_q).append(std::move(translated));
+}
+
 } // namespace
 
 void TranslateBox(
@@ -121,14 +127,20 @@ void TranslateMessageInline(
 	history->translateOfferFrom(from);
 	history->translateTo(to);
 	const auto itemId = FullMsgId(peer->id, msgId);
+	auto original = request.text;
 	provider->request(
 		std::move(request),
 		to,
-		[=, owner = &peer->owner()](TranslateProviderResult result) {
+		[=, owner = &peer->owner(), original = std::move(original)](
+				TranslateProviderResult result) mutable {
 			if (const auto item = owner->message(itemId)) {
 				item->translationDone(
 					to,
-					result.text.value_or(TextWithEntities()));
+					result.text
+						? InlineTranslationText(
+							std::move(original),
+							std::move(*result.text))
+						: TextWithEntities());
 			}
 		});
 }

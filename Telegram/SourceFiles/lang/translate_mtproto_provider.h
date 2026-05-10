@@ -18,4 +18,6 @@ namespace Ui {
 [[nodiscard]] std::unique_ptr<TranslateProvider> CreateMTProtoTranslateProvider(
 	not_null<Main::Session*> session);
 
+void TestLlmTranslator(Fn<void(QString)> done);
+
 } // namespace Ui

@@ -420,7 +420,7 @@ jobs:
           commit_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
           for index in "${!files[@]}"; do
             file="${files[$index]}"
-            details=$'- disable anti forward\n- disable typing status\n- inlinebot rules'
+            details=$'- disable anti forward\n- disable typing status\n- inlinebot rules\n- custom LLM translate'
             if [ "$count" -gt 1 ]; then
               details="${details}"$'\n'"- part $((index + 1))/$count"
             fi

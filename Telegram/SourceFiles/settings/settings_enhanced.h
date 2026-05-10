@@ -36,7 +36,6 @@ namespace Settings {
 
 		rpl::event_stream<QString> _AlwaysDeleteChanged;
 		rpl::event_stream<QString> _BitrateChanged;
-		rpl::event_stream<QString> _TranslationSourceChanged;
 
 		mtpRequestId _requestId = 0;
 		QList<int64> blockList;

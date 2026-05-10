@@ -8040,6 +8040,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_llm_model" = "Model";
 "lng_settings_llm_temperature" = "Temperature";
 "lng_settings_llm_system_prompt" = "System prompt";
+"lng_settings_llm_test_connection" = "Test Connection";
+"lng_settings_llm_testing" = "Testing...";
+"lng_settings_llm_test_success" = "Connection successful!";
+"lng_settings_llm_test_failed" = "Connection failed: {error}";
 "lng_translation_source_google" = "Google";
 "lng_translation_source_telegram" = "Telegram API";
 "lng_translation_source_llm" = "LLM";

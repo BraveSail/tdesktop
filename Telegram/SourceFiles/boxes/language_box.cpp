@@ -9,13 +9,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/platform/base_platform_info.h"
 #include "boxes/abstract_box.h"
+#include "boxes/enhanced_options_box.h"
 #include "boxes/premium_preview_box.h"
 #include "boxes/translate_box.h"
 #include "core/application.h"
+#include "core/enhanced_settings.h"
 #include "data/data_peer_values.h"
 #include "lang/lang_cloud_manager.h"
 #include "lang/lang_instance.h"
 #include "lang/lang_keys.h"
+#include "lang/translate_provider.h"
 #include "main/main_session.h"
 #include "platform/platform_translate_provider.h"
 #include "settings/settings_common.h"
@@ -1501,6 +1504,68 @@ void LanguageBox::setupTop(not_null<Ui::VerticalLayout*> container) {
 		Core::App().settings().setTranslateChatEnabled(checked);
 		Core::App().saveSettingsDelayed();
 	}, translateChat->lifetime());
+
+	const auto inlineTranslateWrap = container->add(
+		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			container,
+			object_ptr<Ui::VerticalLayout>(container)));
+	inlineTranslateWrap->toggle(
+		translateEnabled->toggled(),
+		anim::type::instant);
+	inlineTranslateWrap->toggleOn(translateEnabled->toggledValue());
+	inlineTranslateWrap->entity()->add(
+		object_ptr<Ui::SettingsButton>(
+			inlineTranslateWrap->entity(),
+			tr::lng_settings_translate_in_message(),
+			st::settingsButtonNoIcon))->toggleOn(
+				rpl::single(GetEnhancedBool("translate_in_message"))
+	)->toggledChanges(
+	) | rpl::filter([=](bool toggled) {
+		return (toggled != GetEnhancedBool("translate_in_message"));
+	}) | rpl::on_next([=](bool toggled) {
+		SetEnhancedValue("translate_in_message", toggled);
+		EnhancedSettings::Write();
+	}, inlineTranslateWrap->entity()->lifetime());
+
+	const auto translationOptionsWrap = container->add(
+		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			container,
+			object_ptr<Ui::VerticalLayout>(container)));
+	translationOptionsWrap->toggleOn(rpl::combine(
+		translateEnabled->toggledValue(),
+		translateChat->toggledValue(),
+		_1 || _2));
+
+	auto translationSource = rpl::single(
+		Ui::TranslateSourceLabel(Ui::CurrentTranslateSource())
+	) | rpl::then(
+		_translationSourceChanged.events()
+	) | rpl::map([] {
+		return Ui::TranslateSourceLabel(Ui::CurrentTranslateSource());
+	});
+
+	const auto translationSourceButton = Settings::AddButtonWithLabel(
+		translationOptionsWrap->entity(),
+		tr::lng_settings_translation_source(),
+		std::move(translationSource),
+		st::settingsButtonNoIcon);
+	translationSourceButton->events(
+	) | rpl::on_next([=](not_null<QEvent*> e) {
+		if (e->type() == QEvent::UpdateLater) {
+			_translationSourceChanged.fire({});
+		}
+	}, translationSourceButton->lifetime());
+	translationSourceButton->setClickedCallback([=] {
+		uiShow()->showBox(Box<TranslationSourceBox>());
+	});
+
+	const auto llmSettingsButton = Settings::AddButtonWithIcon(
+		translationOptionsWrap->entity(),
+		tr::lng_settings_llm_translator(),
+		st::settingsButtonNoIcon);
+	llmSettingsButton->setClickedCallback([=] {
+		uiShow()->showBox(Box<LlmTranslatorBox>());
+	});
 
 	using Languages = std::vector<LanguageId>;
 	const auto translateSkipWrap = container->add(

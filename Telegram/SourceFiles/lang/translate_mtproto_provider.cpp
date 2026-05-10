@@ -128,9 +128,15 @@ namespace {
 
 [[nodiscard]] TranslateProviderResult LlmTranslateText(
 		const QString &query,
-		const LanguageId &to) {
+		const LanguageId &to,
+		QString *error = nullptr) {
 	const auto apiKey = LlmApiKey();
 	if (query.isEmpty() || apiKey.isEmpty()) {
+		if (error) {
+			*error = apiKey.isEmpty()
+				? u"API Key is empty"_q
+				: u"Text is empty"_q;
+		}
 		return { .error = TranslateProviderError::Unknown };
 	}
 	const auto targetLanguage = LlmTargetLanguage(to);
@@ -159,6 +165,12 @@ namespace {
 	if (reply->error() != QNetworkReply::NoError
 		|| status < 200
 		|| status >= 300) {
+		if (error) {
+			*error = reply->errorString();
+			if (error->isEmpty() && status) {
+				*error = u"HTTP %1"_q.arg(status);
+			}
+		}
 		result.error = TranslateProviderError::Unknown;
 		reply->deleteLater();
 		return result;
@@ -166,6 +178,9 @@ namespace {
 	const auto translated = ParseLlmResponsesText(reply->readAll());
 	reply->deleteLater();
 	if (translated.isEmpty()) {
+		if (error) {
+			*error = u"Empty response"_q;
+		}
 		result.error = TranslateProviderError::Unknown;
 	} else {
 		result.text = TextWithEntities{ .text = translated };
@@ -404,6 +419,19 @@ private:
 };
 
 } // namespace
+
+void TestLlmTranslator(Fn<void(QString)> done) {
+	crl::async([done = std::move(done)]() mutable {
+		auto error = QString();
+		const auto result = LlmTranslateText(
+			u"测试"_q,
+			LanguageId{ QLocale::English },
+			&error);
+		crl::on_main([done = std::move(done), result, error = std::move(error)]() mutable {
+			done(result.text ? QString() : std::move(error));
+		});
+	});
+}
 
 std::unique_ptr<TranslateProvider> CreateMTProtoTranslateProvider(
 		not_null<Main::Session*> session) {

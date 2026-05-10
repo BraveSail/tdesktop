@@ -81,7 +81,9 @@ protected:
 private:
 	[[nodiscard]] int contentHeight() const;
 
+	void saveFields();
 	void save();
+	void test();
 
 	object_ptr<Ui::InputField> _url = {nullptr};
 	object_ptr<Ui::InputField> _keys = {nullptr};
