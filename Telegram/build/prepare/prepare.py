@@ -191,12 +191,12 @@ def checkCacheKey(stage):
     if not 'key' in stage:
         error('Key not set in stage: ' + stage['name'])
     key = keyPath(stage)
+    if os.path.exists(key):
+        with open(key, 'r') as file:
+            return 'Good' if (file.read() == stage['key']) else 'Stale'
     if not os.path.exists(os.path.join(stage['directory'], stage['name'])):
         return 'NotFound'
-    if not os.path.exists(key):
-        return 'Stale'
-    with open(key, 'r') as file:
-        return 'Good' if (file.read() == stage['key']) else 'Stale'
+    return 'Stale'
 
 def clearCacheKey(stage):
     key = keyPath(stage)
