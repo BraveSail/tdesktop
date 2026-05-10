@@ -153,11 +153,19 @@ jobs:
             ${{ runner.OS }}-x64-qt6-
 
       - name: Normalize cached prepare scripts.
-        shell: bash
+        shell: pwsh
         run: |
-          if [ -d "$LibrariesPath/patches" ]; then
-            find "$LibrariesPath/patches" -maxdepth 1 -type f -name 'build_*_win.sh' -exec sed -i -E 's/-j[0-9]+/-j8/g' {} +
-          fi
+          $patches = Join-Path $env:LibrariesPath 'patches'
+          if (-not (Test-Path -LiteralPath $patches)) {
+            Write-Host "No cached patches directory: $patches"
+            return
+          }
+          $encoding = [System.Text.UTF8Encoding]::new($false)
+          Get-ChildItem -LiteralPath $patches -Filter 'build_*_win.sh' | ForEach-Object {
+            $text = [System.IO.File]::ReadAllText($_.FullName, $encoding)
+            [System.IO.File]::WriteAllText($_.FullName, ($text -replace '-j\d+', '-j8'), $encoding)
+            Write-Host "Normalized $($_.FullName)"
+          }
 
       - name: Libraries.
         env:
@@ -168,11 +176,19 @@ jobs:
           %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent qt6
 
       - name: Normalize prepare scripts before cache save.
-        shell: bash
+        shell: pwsh
         run: |
-          if [ -d "$LibrariesPath/patches" ]; then
-            find "$LibrariesPath/patches" -maxdepth 1 -type f -name 'build_*_win.sh' -exec sed -i -E 's/-j[0-9]+/-j8/g' {} +
-          fi
+          $patches = Join-Path $env:LibrariesPath 'patches'
+          if (-not (Test-Path -LiteralPath $patches)) {
+            Write-Host "No cached patches directory: $patches"
+            return
+          }
+          $encoding = [System.Text.UTF8Encoding]::new($false)
+          Get-ChildItem -LiteralPath $patches -Filter 'build_*_win.sh' | ForEach-Object {
+            $text = [System.IO.File]::ReadAllText($_.FullName, $encoding)
+            [System.IO.File]::WriteAllText($_.FullName, ($text -replace '-j\d+', '-j8'), $encoding)
+            Write-Host "Normalized $($_.FullName)"
+          }
 
       - name: Free up some disk space.
         shell: bash
