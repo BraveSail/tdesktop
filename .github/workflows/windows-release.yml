@@ -152,6 +152,13 @@ jobs:
             ${{ runner.OS }}-x64-qt6-release-
             ${{ runner.OS }}-x64-qt6-
 
+      - name: Normalize cached prepare scripts.
+        shell: bash
+        run: |
+          if [ -d "$LibrariesPath/patches" ]; then
+            find "$LibrariesPath/patches" -maxdepth 1 -type f -name 'build_*_win.sh' -exec sed -i -E 's/-j[0-9]+/-j8/g' {} +
+          fi
+
       - name: Libraries.
         env:
           GYP_MSVS_OVERRIDE_PATH: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\'
@@ -159,6 +166,13 @@ jobs:
         run: |
           where python
           %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat silent qt6
+
+      - name: Normalize prepare scripts before cache save.
+        shell: bash
+        run: |
+          if [ -d "$LibrariesPath/patches" ]; then
+            find "$LibrariesPath/patches" -maxdepth 1 -type f -name 'build_*_win.sh' -exec sed -i -E 's/-j[0-9]+/-j8/g' {} +
+          fi
 
       - name: Free up some disk space.
         shell: bash
