@@ -229,8 +229,8 @@ jobs:
         uses: al-cheb/configure-pagefile-action@v1.5
         continue-on-error: true
         with:
-          minimum-size: 16GB
-          maximum-size: 16GB
+          minimum-size: 32GB
+          maximum-size: 32GB
           disk-root: "D:"
 
       - name: Report pagefile after expansion.
@@ -300,7 +300,7 @@ jobs:
               Write-RunnerResources "before build"
               $build = Start-Process `
                 -FilePath "cmake" `
-                -ArgumentList @("--build", "..\out", "--config", "Release", "--target", "Telegram", "--parallel", "4") `
+                -ArgumentList @("--build", "..\out", "--config", "Release", "--target", "Telegram", "--parallel", "2") `
                 -NoNewWindow `
                 -PassThru
               while (-not $build.HasExited) {
