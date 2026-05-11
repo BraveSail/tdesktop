@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_suggest_post.h"
 #include "api/api_transcribes.h"
+#include "base/random.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/unixtime.h"
 #include "core/click_handler_types.h" // ClickHandlerContext
@@ -32,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/share_box.h"
 #include "boxes/peers/tag_info_box.h"
 #include "ui/effects/reaction_fly_animation.h"
+#include "ui/effects/glare.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/text/text_utilities.h"
 #include "ui/text/text_extended_data.h"
@@ -58,6 +60,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
+#include "styles/style_basic.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_polls.h"
 
@@ -2280,6 +2283,14 @@ void Message::paintText(
 		&& !context.gestureHorizontal.translation) {
 		return;
 	}
+	if (const auto translation = data()->translation()
+		; translation
+		&& translation->requested
+		&& translation->text.empty()
+		&& !translation->failed) {
+		paintTranslationLoading(p, trect, context);
+		return;
+	}
 	prepareCustomEmojiPaint(p, context, text());
 
 	const auto rippleLinkRange = (_linkRipple && _linkRipple->link)
@@ -2378,6 +2389,65 @@ void Message::paintText(
 	}
 	if (appearingClip) {
 		p.restore();
+	}
+}
+
+void Message::paintTranslationLoading(
+		Painter &p,
+		QRect trect,
+		const PaintContext &context) const {
+	const auto lineHeight = st::messageTextStyle.lineHeight;
+	const auto lines = std::clamp(trect.height() / lineHeight, 1, 3);
+	const auto width = trect.width();
+	if (!_translationLoadingGlare) {
+		_translationLoadingGlare = std::make_unique<Ui::GlareEffect>();
+	}
+	if (_translationLoadingWidth != width) {
+		_translationLoadingWidth = width;
+		_translationLoadingLastLineWidth = (width / 4)
+			+ base::RandomIndex(std::max(width / 2, 1));
+	}
+	constexpr auto kTimeout = crl::time(1000);
+	constexpr auto kDuration = crl::time(1000);
+	_translationLoadingGlare->width = width;
+	_translationLoadingGlare->validate(
+		st::dialogsBg->c,
+		[=] { repaint(trect); },
+		kTimeout,
+		kDuration);
+
+	auto hq = PainterHighQualityEnabler(p);
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::windowBgOver);
+	const auto h = st::messageTextStyle.font->ascent;
+	const auto yshift = lineHeight - h
+		- (lineHeight - st::messageTextStyle.font->height);
+	for (auto i = 0; i != lines; ++i) {
+		const auto lineWidth = (i == lines - 1)
+			? std::min(width, _translationLoadingLastLineWidth)
+			: width;
+		p.drawRoundedRect(
+			trect.x(),
+			trect.y() + i * lineHeight + yshift,
+			lineWidth,
+			h,
+			h / 2,
+			h / 2);
+	}
+	auto &glare = *_translationLoadingGlare;
+	if (glare.glare.birthTime) {
+		const auto progress = glare.progress(context.now);
+		const auto x = trect.x()
+			- glare.width
+			+ (width + glare.width * 2) * progress;
+		p.drawTiledPixmap(
+			x,
+			trect.y(),
+			glare.width,
+			lines * lineHeight,
+			glare.pixmap,
+			0,
+			0);
 	}
 }
 

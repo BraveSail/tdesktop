@@ -121,18 +121,16 @@ void TranslateMessageInline(
 	const auto history = peer->owner().history(peer);
 	const auto to = ChooseTranslateTo(history);
 	const auto itemId = FullMsgId(peer->id, msgId);
-	if (const auto item = peer->owner().message(itemId)) {
-		if (!item->translationShowRequiresRequest(to)) {
-			return;
-		}
-	} else {
+	const auto item = peer->owner().message(itemId);
+	if (!item) {
 		return;
 	}
+	item->translationStart(to);
 	auto original = request.text;
 	provider->request(
 		std::move(request),
 		to,
-		[=, owner = &peer->owner(), original = std::move(original)](
+		[=, provider = provider, owner = &peer->owner(), original = std::move(original)](
 				TranslateProviderResult result) mutable {
 			if (const auto item = owner->message(itemId)) {
 				item->translationDone(

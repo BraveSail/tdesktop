@@ -24,6 +24,7 @@ struct ReactionId;
 
 namespace Ui {
 struct BubbleRounding;
+struct GlareEffect;
 class RoundCheckbox;
 } // namespace Ui
 
@@ -305,6 +306,10 @@ private:
 		Painter &p,
 		QRect &trect,
 		const PaintContext &context) const;
+	void paintTranslationLoading(
+		Painter &p,
+		QRect trect,
+		const PaintContext &context) const;
 
 	bool getStateCommentsButton(
 		QPoint point,
@@ -419,6 +424,9 @@ private:
 	mutable QPoint _linkRippleLastPoint;
 	mutable std::unique_ptr<CommentsButton> _comments;
 	mutable std::unique_ptr<TranscribeButton> _summarize;
+	mutable std::unique_ptr<Ui::GlareEffect> _translationLoadingGlare;
+	mutable int _translationLoadingWidth = 0;
+	mutable int _translationLoadingLastLineWidth = 0;
 
 	mutable Ui::Text::String _fromName;
 	mutable std::unique_ptr<FromNameStatus> _fromNameStatus;

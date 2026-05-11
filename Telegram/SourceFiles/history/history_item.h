@@ -479,6 +479,7 @@ public:
 	[[nodiscard]] const HistoryMessageTranslation *translation() const;
 	[[nodiscard]] bool translationShowRequiresCheck(LanguageId to) const;
 	bool translationShowRequiresRequest(LanguageId to);
+	void translationStart(LanguageId to);
 	void translationDone(LanguageId to, TextWithEntities result, bool show = false);
 
 	[[nodiscard]] bool canReact() const;
