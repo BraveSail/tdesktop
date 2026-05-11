@@ -252,6 +252,7 @@ jobs:
         env:
           TDESKTOP_API_ID: ${{ secrets.TDESKTOP_API_ID }}
           TDESKTOP_API_HASH: ${{ secrets.TDESKTOP_API_HASH }}
+          CL: /FS
         run: |
           if (-not $env:TDESKTOP_API_ID) {
             throw "Missing TDESKTOP_API_ID secret."
@@ -299,7 +300,7 @@ jobs:
               Write-RunnerResources "before build"
               $build = Start-Process `
                 -FilePath "cmake" `
-                -ArgumentList @("--build", "..\out", "--config", "Release", "--target", "Telegram", "--parallel") `
+                -ArgumentList @("--build", "..\out", "--config", "Release", "--target", "Telegram", "--parallel", "4") `
                 -NoNewWindow `
                 -PassThru
               while (-not $build.HasExited) {
