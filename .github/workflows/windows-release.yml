@@ -301,7 +301,7 @@ jobs:
               Write-RunnerResources "before build"
               $build = Start-Process `
                 -FilePath "cmake" `
-                -ArgumentList @("--build", "..\out", "--config", "Release", "--target", "Telegram", "--parallel", "2") `
+                -ArgumentList @("--build", "..\out", "--config", "Release", "--target", "Telegram", "--parallel", "4") `
                 -NoNewWindow `
                 -PassThru
               while (-not $build.HasExited) {
