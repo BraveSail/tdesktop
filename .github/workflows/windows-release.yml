@@ -290,6 +290,7 @@ jobs:
               -D "TDESKTOP_API_ID=$env:TDESKTOP_API_ID" `
               -D "TDESKTOP_API_HASH=$env:TDESKTOP_API_HASH" `
               -D "CMAKE_CONFIGURATION_TYPES=Release" `
+              -D "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded" `
               -D "CMAKE_COMPILE_WARNING_AS_ERROR=ON" `
               -D "DESKTOP_APP_ENABLE_LTO=ON" `
               -D "DESKTOP_APP_DISABLE_AUTOUPDATE=OFF" `
