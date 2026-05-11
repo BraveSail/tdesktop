@@ -76,6 +76,35 @@ constexpr auto kFullLineAppearFinalDuration = crl::time(120);
 constexpr auto kLineHeightAppearDuration = crl::time(100);
 constexpr auto kLineHeightAppearFinalDuration = crl::time(60);
 constexpr auto kMinWidthAppearDuration = crl::time(160);
+constexpr auto kTranslationLoadingLines = 2;
+
+[[nodiscard]] int TranslationLoadingLineHeight() {
+	const auto fontHeight = st::messageTextStyle.font->height;
+	return (st::messageTextStyle.lineHeight > 0)
+		? st::messageTextStyle.lineHeight
+		: fontHeight;
+}
+
+[[nodiscard]] int TranslationLoadingSkip() {
+	const auto lineHeight = TranslationLoadingLineHeight();
+	return (lineHeight > 0) ? std::max(lineHeight / 2, 1) : 0;
+}
+
+[[nodiscard]] int TranslationLoadingAdditionalHeight() {
+	const auto lineHeight = TranslationLoadingLineHeight();
+	return (lineHeight > 0)
+		? (TranslationLoadingSkip() + kTranslationLoadingLines * lineHeight)
+		: 0;
+}
+
+[[nodiscard]] bool HasTranslationLoading(not_null<const HistoryItem*> item) {
+	if (const auto translation = item->translation()) {
+		return translation->requested
+			&& translation->text.empty()
+			&& !translation->failed;
+	}
+	return false;
+}
 
 void ApplyRevealGradient(
 		not_null<const TextAppearing*> appearing,
@@ -811,6 +840,7 @@ QSize Message::performCountOptimalSize() {
 
 		// Entry page is always a bubble bottom.
 		withVisibleText = hasVisibleText();
+		const auto translationLoading = HasTranslationLoading(item);
 		fullTextualWidth = textualMaxWidth();
 		const auto textualWidth = bubbleTextualWidth();
 		auto mediaOnBottom = (mediaDisplayed && media->isBubbleBottom()) || check || (entry/* && entry->isBubbleBottom()*/);
@@ -822,6 +852,9 @@ QSize Message::performCountOptimalSize() {
 			accumulate_max(nonTextMax, st::msgMaxWidth);
 		}
 		minHeight = withVisibleText ? text().minHeight() : 0;
+		if (withVisibleText && translationLoading) {
+			minHeight += TranslationLoadingAdditionalHeight();
+		}
 		if (reactionsInBubble) {
 			const auto reactionsMaxWidth = st::msgPadding.left()
 				+ _reactions->maxWidth()
@@ -2283,14 +2316,7 @@ void Message::paintText(
 		&& !context.gestureHorizontal.translation) {
 		return;
 	}
-	if (const auto translation = data()->translation()
-		; translation
-		&& translation->requested
-		&& translation->text.empty()
-		&& !translation->failed) {
-		paintTranslationLoading(p, trect, context);
-		return;
-	}
+	const auto translationLoading = HasTranslationLoading(data());
 	prepareCustomEmojiPaint(p, context, text());
 
 	const auto rippleLinkRange = (_linkRipple && _linkRipple->link)
@@ -2390,18 +2416,42 @@ void Message::paintText(
 	if (appearingClip) {
 		p.restore();
 	}
+	if (translationLoading) {
+		const auto loadingTop = trect.y()
+			+ textHeightFor(trect.width())
+			+ TranslationLoadingSkip();
+		const auto loadingHeight = trect.y() + trect.height() - loadingTop;
+		if (loadingHeight > 0) {
+			paintTranslationLoading(
+				p,
+				QRect(trect.x(), loadingTop, trect.width(), loadingHeight),
+				context);
+		}
+	}
 }
 
 void Message::paintTranslationLoading(
 		Painter &p,
 		QRect trect,
 		const PaintContext &context) const {
-	const auto lineHeight = st::messageTextStyle.lineHeight;
-	const auto lines = std::clamp(trect.height() / lineHeight, 1, 3);
 	const auto width = trect.width();
+	const auto lineHeight = TranslationLoadingLineHeight();
+	if (width <= 0 || trect.height() <= 0 || lineHeight <= 0) {
+		return;
+	}
+	const auto lines = std::clamp(
+		trect.height() / lineHeight,
+		1,
+		kTranslationLoadingLines);
+	const auto loadingHeight = std::min(trect.height(), lines * lineHeight);
+	if (loadingHeight <= 0) {
+		return;
+	}
 	if (!_translationLoadingGlare) {
 		_translationLoadingGlare = std::make_unique<Ui::GlareEffect>();
 	}
+	const auto refreshGlare = (_translationLoadingWidth != width)
+		|| _translationLoadingGlare->pixmap.isNull();
 	if (_translationLoadingWidth != width) {
 		_translationLoadingWidth = width;
 		_translationLoadingLastLineWidth = (width / 4)
@@ -2410,18 +2460,24 @@ void Message::paintTranslationLoading(
 	constexpr auto kTimeout = crl::time(1000);
 	constexpr auto kDuration = crl::time(1000);
 	_translationLoadingGlare->width = width;
-	_translationLoadingGlare->validate(
-		st::dialogsBg->c,
-		[=] { repaint(trect); },
-		kTimeout,
-		kDuration);
+	if (refreshGlare) {
+		_translationLoadingGlare->validate(
+			st::dialogsBg->c,
+			[=] { repaint(trect); },
+			kTimeout,
+			kDuration);
+	}
 
 	auto hq = PainterHighQualityEnabler(p);
 	p.setPen(Qt::NoPen);
 	p.setBrush(st::windowBgOver);
 	const auto h = st::messageTextStyle.font->ascent;
-	const auto yshift = lineHeight - h
-		- (lineHeight - st::messageTextStyle.font->height);
+	if (h <= 0) {
+		return;
+	}
+	p.save();
+	p.setClipRect(QRect(trect.x(), trect.y(), width, loadingHeight));
+	const auto yshift = st::messageTextStyle.font->height - h;
 	for (auto i = 0; i != lines; ++i) {
 		const auto lineWidth = (i == lines - 1)
 			? std::min(width, _translationLoadingLastLineWidth)
@@ -2435,8 +2491,9 @@ void Message::paintTranslationLoading(
 			h / 2);
 	}
 	auto &glare = *_translationLoadingGlare;
-	if (glare.glare.birthTime) {
-		const auto progress = glare.progress(context.now);
+	if (glare.glare.birthTime
+		&& glare.glare.deathTime > glare.glare.birthTime) {
+		const auto progress = std::clamp(glare.progress(context.now), 0., 1.);
 		const auto x = trect.x()
 			- glare.width
 			+ (width + glare.width * 2) * progress;
@@ -2444,11 +2501,12 @@ void Message::paintTranslationLoading(
 			x,
 			trect.y(),
 			glare.width,
-			lines * lineHeight,
+			loadingHeight,
 			glare.pixmap,
 			0,
 			0);
 	}
+	p.restore();
 }
 
 PointState Message::pointState(QPoint point) const {
@@ -5281,6 +5339,7 @@ int Message::resizeContentGetHeight(int newWidth) {
 	}
 
 	const auto item = data();
+	const auto translationLoading = HasTranslationLoading(item);
 	const auto postShowingAuthor = item->isPostShowingAuthor() ? 1 : 0;
 	if (_postShowingAuthor != postShowingAuthor) {
 		_postShowingAuthor = postShowingAuthor;
@@ -5422,6 +5481,9 @@ int Message::resizeContentGetHeight(int newWidth) {
 					newHeight += appearing->shownHeight;
 				} else {
 					newHeight += textHeightFor(textWidth);
+				}
+				if (translationLoading) {
+					newHeight += TranslationLoadingAdditionalHeight();
 				}
 			}
 			if (!mediaOnBottom && (!_viewButton || !reactionsInBubble)) {

@@ -3097,11 +3097,17 @@ bool HistoryItem::translationShowRequiresCheck(LanguageId to) const {
 	// Check if a call to translationShowRequiresRequest(to) is not a no-op.
 	if (!to) {
 		if (const auto translation = Get<HistoryMessageTranslation>()) {
+			if (translation->manual) {
+				return false;
+			}
 			return (!translation->failed && translation->text.empty())
 				|| translation->used;
 		}
 		return false;
 	} else if (const auto translation = Get<HistoryMessageTranslation>()) {
+		if (translation->manual) {
+			return true;
+		}
 		if (translation->to == to) {
 			return !translation->used && !translation->text.empty();
 		}
@@ -3115,7 +3121,9 @@ bool HistoryItem::translationShowRequiresRequest(LanguageId to) {
 	// When changing be sure to reflect in translationShowRequiresCheck(to).
 	if (!to) {
 		if (const auto translation = Get<HistoryMessageTranslation>()) {
-			if (!translation->failed && translation->text.empty()) {
+			if (translation->manual) {
+				return false;
+			} else if (!translation->failed && translation->text.empty()) {
 				Assert(!translation->used);
 				RemoveComponents(HistoryMessageTranslation::Bit());
 			} else {
@@ -3124,7 +3132,7 @@ bool HistoryItem::translationShowRequiresRequest(LanguageId to) {
 		}
 		return false;
 	} else if (const auto translation = Get<HistoryMessageTranslation>()) {
-		if (translation->to == to) {
+		if (!translation->manual && translation->to == to) {
 			translationToggle(translation, true);
 			return false;
 		}
@@ -3132,6 +3140,7 @@ bool HistoryItem::translationShowRequiresRequest(LanguageId to) {
 		translation->to = to;
 		translation->requested = true;
 		translation->failed = false;
+		translation->manual = false;
 		translation->text = {};
 		return true;
 	} else {
@@ -3160,12 +3169,14 @@ void HistoryItem::translationStart(LanguageId to) {
 		translation->requested = true;
 		translation->failed = false;
 		translation->used = false;
+		translation->manual = true;
 		translation->text = {};
 	} else {
 		AddComponents(HistoryMessageTranslation::Bit());
 		const auto added = Get<HistoryMessageTranslation>();
 		added->to = to;
 		added->requested = true;
+		added->manual = true;
 	}
 	_history->owner().requestItemTextRefresh(this);
 }
@@ -3177,8 +3188,10 @@ void HistoryItem::translationDone(
 	const auto set = [&](not_null<HistoryMessageTranslation*> translation) {
 		if (result.empty()) {
 			translation->failed = true;
+			translation->manual = show;
 			_history->owner().requestItemTextRefresh(this);
 		} else {
+			translation->manual = show;
 			translation->text = std::move(result);
 			if (show || (_history->translatedTo() == to)) {
 				translationToggle(translation, true);
@@ -3581,8 +3594,8 @@ const TextWithEntities &HistoryItem::translatedText() const {
 	} else if (const auto translation = this->translation()
 		; translation
 		&& translation->used
-		&& (translation->to == history()->translatedTo()
-			|| !history()->translatedTo())) {
+		&& (translation->manual
+			|| translation->to == history()->translatedTo())) {
 		return translation->text;
 	} else {
 		return originalText();
