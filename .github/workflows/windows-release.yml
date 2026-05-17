@@ -14,8 +14,6 @@ on:
   push:
     branches:
       - dev2
-    paths:
-      - '.github/workflows/windows-release.yml'
 
 jobs:
   windows-release:
