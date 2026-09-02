@@ -1,5 +1,13 @@
 # Agent Guide for Telegram Desktop
 
+## Local Fork Preservation
+
+- **Before merging upstream or resolving conflicts, read `LOCAL_FORK_MODIFICATIONS.md`.**
+  This fork has local features that upstream may not have.
+- Preserve local functionality unless upstream has an equivalent or better
+  implementation. Inspect whole runtime paths and validate behavior markers;
+  do not resolve conflicts by blindly taking upstream.
+
 This guide defines repository-wide instructions for coding agents working with the Telegram Desktop codebase.
 
 ## Working from Codex on Windows + WSL
