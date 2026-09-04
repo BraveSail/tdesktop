@@ -22,6 +22,7 @@ class SessionShow;
 
 namespace Ui {
 class PopupMenu;
+class Show;
 enum class ReportReason;
 } // namespace Ui
 
@@ -104,7 +105,8 @@ void AddPollActions(
 	not_null<HistoryItem*> item,
 	Context context,
 	not_null<Window::SessionController*> controller,
-	bool skipRetractVote = false);
+	bool skipRetractVote = false,
+	bool skipViewStats = false);
 void AddSaveSoundForNotifications(
 	not_null<Ui::PopupMenu*> menu,
 	not_null<HistoryItem*> item,
@@ -166,6 +168,13 @@ void AddStickerSetOwnerActions(
 	not_null<Ui::PopupMenu*> menu,
 	not_null<DocumentData*> document,
 	HistoryItem* item);
+void AddEphemeralMessageActions(
+	not_null<Ui::PopupMenu*> menu,
+	std::shared_ptr<Ui::Show> show,
+	not_null<HistoryItem*> item);
+void AddEphemeralAboutAction(
+	not_null<Ui::PopupMenu*> menu,
+	not_null<HistoryItem*> item);
 
 [[nodiscard]] TextWithEntities TransribedText(not_null<HistoryItem*> item);
 

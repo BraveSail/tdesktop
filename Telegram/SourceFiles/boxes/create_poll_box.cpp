@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/create_poll_box.h"
 
+#include "poll/poll_link_box.h"
+#include "poll/poll_link_thumbnail.h"
 #include "poll/poll_media_upload.h"
 #include "base/call_delayed.h"
 #include "base/qt/qt_key_modifiers.h"
@@ -36,7 +38,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
+#include "data/data_web_page.h"
 #include "data/stickers/data_custom_emoji.h"
+#include "history/view/controls/history_view_webpage_processor.h"
 #include "history/view/media/menu/history_view_poll_menu.h"
 #include "history/view/history_view_schedule_box.h"
 #include "info/channel_statistics/boosts/giveaway/select_countries_box.h"
@@ -75,6 +79,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/boxes/choose_date_time.h"
+#include "ui/layers/generic_box.h"
 #include "ui/text/format_values.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/scroll_area.h"
@@ -88,12 +93,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "apiwrap.h"
 #include "styles/style_boxes.h"
-#include "styles/style_dialogs.h"
-#include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h" // defaultComposeFiles.
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
-#include "styles/style_overview.h"
 #include "styles/style_polls.h"
 #include "styles/style_settings.h"
 
@@ -152,6 +154,7 @@ public:
 	bool refreshStaleMedia(crl::time threshold);
 	[[nodiscard]] std::vector<PollAnswer> toPollAnswers() const;
 	void focusFirst();
+	void focusLast();
 
 	void enableChooseCorrect(bool enabled, bool multiCorrect = false);
 
@@ -159,7 +162,7 @@ public:
 	[[nodiscard]] rpl::producer<int> usedCount() const;
 	[[nodiscard]] rpl::producer<not_null<QWidget*>> scrollToWidget() const;
 	[[nodiscard]] rpl::producer<> backspaceInFront() const;
-	[[nodiscard]] rpl::producer<> tabbed() const;
+	[[nodiscard]] rpl::producer<bool> tabbed() const;
 
 	void handlePaste(
 		not_null<Ui::InputField*> field,
@@ -278,7 +281,7 @@ private:
 	bool _hasCorrect = false;
 	rpl::event_stream<not_null<QWidget*>> _scrollToWidget;
 	rpl::event_stream<> _backspaceInFront;
-	rpl::event_stream<> _tabbed;
+	rpl::event_stream<bool> _tabbed;
 	rpl::lifetime _emojiPanelLifetime;
 
 };
@@ -302,6 +305,11 @@ void InitField(
 		field,
 		session,
 		options);
+}
+
+void DisableFieldMarkdown(not_null<Ui::InputField*> field) {
+	field->setMarkdownReplacesEnabled(rpl::single(
+		Ui::MarkdownEnabledState{ Ui::MarkdownDisabled() }));
 }
 
 not_null<Ui::FlatLabel*> CreateWarningLabel(
@@ -734,7 +742,7 @@ void Options::Option::showAddIcon(bool show) {
 PollAnswer Options::Option::toPollAnswer(int index) const {
 	Expects(index >= 0 && index < kMaxOptionsCount);
 
-	const auto text = field()->getTextWithAppliedMarkdown();
+	const auto text = field()->getTextWithTags();
 
 	auto result = PollAnswer{
 		TextWithEntities{
@@ -822,7 +830,7 @@ rpl::producer<> Options::backspaceInFront() const {
 	return _backspaceInFront.events();
 }
 
-rpl::producer<> Options::tabbed() const {
+rpl::producer<bool> Options::tabbed() const {
 	return _tabbed.events();
 }
 
@@ -861,6 +869,12 @@ void Options::focusFirst() {
 	Expects(!_list.empty());
 
 	_list.front()->setFocus();
+}
+
+void Options::focusLast() {
+	Expects(!_list.empty());
+
+	_list.back()->setFocus();
 }
 
 std::shared_ptr<Ui::RadiobuttonGroup> Options::createChooseCorrectGroup() {
@@ -1060,6 +1074,7 @@ void Options::initOptionField(not_null<Ui::InputField*> field) {
 			}
 		}, emojiToggle->lifetime());
 	}
+	DisableFieldMarkdown(field);
 	field->submits(
 	) | rpl::on_next([=] {
 		const auto index = findField(field);
@@ -1085,14 +1100,20 @@ void Options::initOptionField(not_null<Ui::InputField*> field) {
 		_scrollToWidget.fire_copy(field);
 	}, field->lifetime());
 	field->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
+	) | rpl::on_next([=](not_null<Ui::InputField::TabbedRequest*> request) {
 		const auto index = findField(field);
-		if (index + 1 < _list.size()) {
+		if (request->backward) {
+			if (index > 0) {
+				_list[index - 1]->setFocus();
+			} else {
+				_tabbed.fire(true);
+			}
+		} else if (index + 1 < _list.size()) {
 			_list[index + 1]->setFocus();
 		} else {
-			_tabbed.fire({});
+			_tabbed.fire(false);
 		}
-		*handled = true;
+		request->handled = true;
 	}, field->lifetime());
 	base::install_event_filter(field, [=](not_null<QEvent*> event) {
 		if (event->type() != QEvent::KeyPress
@@ -1395,6 +1416,7 @@ not_null<Ui::InputField*> CreatePollBox::setupQuestion(
 			}, emojiToggle->lifetime());
 		}
 	}
+	DisableFieldMarkdown(question);
 
 	const auto warning = CreateWarningLabel(
 		container,
@@ -1570,6 +1592,9 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			= std::make_shared<PollMediaState>();
 		std::shared_ptr<PollMediaState> solutionMedia
 			= std::make_shared<PollMediaState>();
+		std::shared_ptr<HistoryView::Controls::WebpageResolver>
+			webpageResolver;
+		base::flat_map<PollMediaState*, rpl::lifetime> webPageLifetimes;
 		std::weak_ptr<PollMediaState> stickerTarget;
 		base::flat_map<FullMsgId, UploadContext> uploads;
 		base::unique_qptr<Ui::PopupMenu> mediaMenu;
@@ -1582,6 +1607,8 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	};
 	const auto state = lifetime().make_state<State>();
 	state->prepareQueue = std::make_unique<TaskQueue>();
+	state->webpageResolver = std::make_shared<
+		HistoryView::Controls::WebpageResolver>(&_controller->session());
 
 	auto result = object_ptr<Ui::VerticalLayout>(this);
 	const auto container = result.data();
@@ -2461,6 +2488,89 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			FileDialog::AllFilesFilter(),
 			callback);
 	};
+	const auto applyResolvedWebPage = [=](
+			std::shared_ptr<PollMediaState> media,
+			not_null<WebPageData*> page) {
+		auto pollMedia = PollMedia();
+		pollMedia.webpage = page;
+		pollMedia.url = page->url.isEmpty() ? media->media.url : page->url;
+		auto thumbnail = page->photo
+			? Ui::MakePhotoThumbnailCenterCrop(page->photo, FullMsgId())
+			: Poll::MakeLinkThumbnail();
+		const auto rounded = (page->photo != nullptr);
+		setMedia(media, pollMedia, std::move(thumbnail), rounded);
+	};
+	const auto subscribeToWebPageUpdates = [=](
+			std::shared_ptr<PollMediaState> media,
+			not_null<WebPageData*> page) {
+		const auto raw = media.get();
+		const auto weak = std::weak_ptr<PollMediaState>(media);
+		_controller->session().data().webPageUpdates(
+		) | rpl::filter([=](not_null<WebPageData*> updated) {
+			const auto locked = weak.lock();
+			return locked
+				&& (updated == page)
+				&& (locked->media.webpage == page);
+		}) | rpl::on_next([=] {
+			if (const auto locked = weak.lock()) {
+				applyResolvedWebPage(locked, page);
+			}
+		}, state->webPageLifetimes[raw]);
+	};
+	const auto resolveLink = [=](
+			std::shared_ptr<PollMediaState> media,
+			QString url) {
+		const auto raw = media.get();
+		const auto weak = std::weak_ptr<PollMediaState>(media);
+		state->webPageLifetimes[raw].destroy();
+		const auto token = media->token;
+		const auto apply = [=](const QString &resolvedUrl) {
+			const auto locked = weak.lock();
+			if (!locked || locked->token != token || resolvedUrl != url) {
+				return;
+			}
+			const auto cached = state->webpageResolver->lookup(url);
+			if (!cached || !*cached) {
+				return;
+			}
+			const auto page = *cached;
+			applyResolvedWebPage(locked, page);
+			subscribeToWebPageUpdates(locked, page);
+		};
+		if (const auto cached = state->webpageResolver->lookup(url)) {
+			if (*cached) {
+				applyResolvedWebPage(media, *cached);
+				subscribeToWebPageUpdates(media, *cached);
+			}
+			return;
+		}
+		state->webPageLifetimes[raw]
+			= state->webpageResolver->resolved(
+			) | rpl::filter([=](const QString &resolvedUrl) {
+				const auto locked = weak.lock();
+				return locked
+					&& (resolvedUrl == url)
+					&& (locked->token == token);
+			}) | rpl::take(1) | rpl::on_next(apply);
+		state->webpageResolver->request(url);
+	};
+	const auto chooseLink = [=](std::shared_ptr<PollMediaState> media) {
+		const auto initial = media->media.url;
+		const auto callback = crl::guard(this, [=](QString url) {
+			auto pollMedia = PollMedia();
+			pollMedia.url = url;
+			setMedia(
+				media,
+				pollMedia,
+				Poll::MakeLinkThumbnail(),
+				false);
+			resolveLink(media, url);
+		});
+		_controller->show(Box(
+			Poll::AddPollOptionLinkBox,
+			initial,
+			callback));
+	};
 	const auto clearMedia = [=](std::shared_ptr<PollMediaState> media) {
 		auto toCancel = std::vector<FullMsgId>();
 		for (auto i = state->uploads.begin(); i != state->uploads.end();) {
@@ -2474,6 +2584,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 		for (const auto &id : toCancel) {
 			_controller->session().uploader().cancel(id);
 		}
+		state->webPageLifetimes.remove(media.get());
 		setMedia(media, PollMedia(), nullptr, false);
 	};
 	const auto chooseLocation = [=](
@@ -2580,6 +2691,10 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 				[=] { showStickerPanel(button, media); },
 				&st::menuIconStickers);
 		}
+		state->mediaMenu->addAction(
+			tr::lng_polls_create_option_link(tr::now),
+			[=] { chooseLink(media); },
+			&st::menuIconLink);
 		if (media->media || media->uploading) {
 			state->mediaMenu->addAction(
 				tr::lng_box_remove(tr::now),
@@ -2656,16 +2771,15 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 				st::boxDividerLabel),
 			st::createPollLimitPadding));
 
-	question->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
-		description->setFocus();
-		*handled = true;
-	}, question->lifetime());
-
+	using TabbedRequest = Ui::InputField::TabbedRequest;
 	description->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
-		options->focusFirst();
-		*handled = true;
+	) | rpl::on_next([=](not_null<TabbedRequest*> request) {
+		if (request->backward) {
+			question->setFocus();
+		} else {
+			options->focusFirst();
+		}
+		request->handled = true;
 	}, description->lifetime());
 
 	Ui::AddSkip(container);
@@ -2954,14 +3068,33 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			st::settingsButtonNoIcon)
 	)->toggleOn(rpl::single(false));
 
+	Ui::AddSkip(durationInner);
+	Ui::AddDividerText(
+		durationInner,
+		tr::lng_polls_create_hide_results_about());
+
 	const auto solution = setupSolution(
 		container,
 		rpl::single(quiz->toggled()) | rpl::then(quiz->toggledChanges()));
 	addMediaButton(solution, state->solutionMedia);
 
+	question->tabbed(
+	) | rpl::on_next([=](not_null<TabbedRequest*> request) {
+		if (!request->backward) {
+			description->setFocus();
+		} else if (quiz->toggled()) {
+			solution->setFocus();
+		} else {
+			options->focusLast();
+		}
+		request->handled = true;
+	}, question->lifetime());
+
 	options->tabbed(
-	) | rpl::on_next([=] {
-		if (quiz->toggled()) {
+	) | rpl::on_next([=](bool backward) {
+		if (backward) {
+			description->setFocus();
+		} else if (quiz->toggled()) {
 			solution->setFocus();
 		} else {
 			question->setFocus();
@@ -2969,9 +3102,13 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	}, question->lifetime());
 
 	solution->tabbed(
-	) | rpl::on_next([=](not_null<bool*> handled) {
-		question->setFocus();
-		*handled = true;
+	) | rpl::on_next([=](not_null<TabbedRequest*> request) {
+		if (request->backward) {
+			options->focusLast();
+		} else {
+			question->setFocus();
+		}
+		request->handled = true;
 	}, solution->lifetime());
 
 	const auto updateAddOptionsLocked = [=] {
@@ -3050,7 +3187,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 	};
 
 	const auto collectResult = [=] {
-		const auto textWithTags = question->getTextWithAppliedMarkdown();
+		const auto textWithTags = question->getTextWithTags();
 		const auto descriptionWithTags = description->getTextWithTags();
 		using Flag = PollData::Flag;
 		auto result = PollData(&_controller->session().data(), id);

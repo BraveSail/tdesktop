@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/integration.h"
 #include "ui/style/style_core.h"
+#include <QtCore/QJsonObject>
 
 #define DeclareReadSetting(Type, Name) extern Type g##Name; \
 inline const Type &c##Name() { \
@@ -80,6 +81,7 @@ DeclareSetting(int32, LastUpdateCheck);
 DeclareSetting(bool, NoStartUpdate);
 DeclareSetting(bool, StartToSettings);
 DeclareSetting(bool, DebugMode);
+DeclareSetting(bool, TestAgent);
 DeclareReadSetting(bool, ManyInstance);
 DeclareSetting(bool, Quit);
 

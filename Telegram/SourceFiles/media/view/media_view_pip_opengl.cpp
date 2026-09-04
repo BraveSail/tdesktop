@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/shadow.h"
 #include "media/streaming/media_streaming_common.h"
 #include "base/platform/base_platform_info.h"
+#include "styles/style_basic.h"
 #include "styles/style_media_view.h"
 #include "styles/style_widgets.h"
 
@@ -307,6 +308,12 @@ void Pip::RendererGL::paintTransformedVideoFrame(
 	if (data.format == Streaming::FrameFormat::ARGB32) {
 		Assert(!data.image.isNull());
 		paintTransformedStaticContent(data.image, geometry);
+		return;
+	} else if (data.format == Streaming::FrameFormat::NativeTexture) {
+		const auto image = _owner->currentVideoFrameImage();
+		if (!image.isNull()) {
+			paintTransformedStaticContent(image, geometry);
+		}
 		return;
 	}
 	Assert(!data.yuv->size.isEmpty());

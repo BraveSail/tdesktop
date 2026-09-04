@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtNetwork/QNetworkRequest>
 
 #include <algorithm>
+#include <memory>
 
 namespace Ui {
 namespace {
@@ -194,9 +195,12 @@ public:
 	: _session(session)
 	, _api(&session->mtp()) {
 	}
+	~MTProtoTranslateProvider() override {
+		*_alive = false;
+	}
 
 	[[nodiscard]] bool supportsMessageId() const override {
-		return true;
+		return CurrentTranslateSource() == TranslateSource::Telegram;
 	}
 
 	void request(
@@ -346,11 +350,13 @@ private:
 			Fn<void(int, TranslateProviderResult)> doneOne,
 			Fn<void()> doneAll) {
 		const auto target = GoogleTargetLanguage(to);
+		const auto alive = _alive;
 		crl::async([
 				requests = std::move(requests),
 				target,
 				doneOne = std::move(doneOne),
-				doneAll = std::move(doneAll)]() mutable {
+				doneAll = std::move(doneAll),
+				alive]() mutable {
 			auto results = std::vector<TranslateProviderResult>();
 			results.reserve(requests.size());
 			for (const auto &request : requests) {
@@ -377,7 +383,11 @@ private:
 			crl::on_main([
 					results = std::move(results),
 					doneOne = std::move(doneOne),
-					doneAll = std::move(doneAll)]() mutable {
+					doneAll = std::move(doneAll),
+					alive]() mutable {
+				if (!*alive) {
+					return;
+				}
 				for (auto i = 0; i != results.size(); ++i) {
 					doneOne(i, std::move(results[i]));
 				}
@@ -391,11 +401,13 @@ private:
 			const LanguageId &to,
 			Fn<void(int, TranslateProviderResult)> doneOne,
 			Fn<void()> doneAll) {
+		const auto alive = _alive;
 		crl::async([
 				requests = std::move(requests),
 				to,
 				doneOne = std::move(doneOne),
-				doneAll = std::move(doneAll)]() mutable {
+				doneAll = std::move(doneAll),
+				alive]() mutable {
 			auto results = std::vector<TranslateProviderResult>();
 			results.reserve(requests.size());
 			for (const auto &request : requests) {
@@ -404,7 +416,11 @@ private:
 			crl::on_main([
 					results = std::move(results),
 					doneOne = std::move(doneOne),
-					doneAll = std::move(doneAll)]() mutable {
+					doneAll = std::move(doneAll),
+					alive]() mutable {
+				if (!*alive) {
+					return;
+				}
 				for (auto i = 0; i != results.size(); ++i) {
 					doneOne(i, std::move(results[i]));
 				}
@@ -415,6 +431,7 @@ private:
 
 	const not_null<Main::Session*> _session;
 	MTP::Sender _api;
+	std::shared_ptr<bool> _alive = std::make_shared<bool>(true);
 
 };
 

@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/translate_provider.h"
 #include "lang/translate_mtproto_provider.h"
 #include "settings/settings_enhanced.h"
+#include "styles/style_passcode_box.h"
 
 NetBoostBox::NetBoostBox(QWidget *parent) {
 }

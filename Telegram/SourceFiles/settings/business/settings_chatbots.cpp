@@ -30,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/vertical_list.h"
 #include "window/window_session_controller.h"
+#include "styles/style_add_contact_box.h"
 #include "styles/style_boxes.h"
 #include "styles/style_chat.h"
 #include "styles/style_layers.h"
@@ -478,6 +479,7 @@ void AppendUsersFromPeerList(
 				finish();
 			}).send();
 			data->searchRequestId = session->api().request(MTPcontacts_Search(
+				MTP_flags(0),
 				MTP_string(extracted),
 				MTP_int(SearchPeopleLimit)
 			)).done([=](const MTPcontacts_Found &result) {
@@ -675,6 +677,9 @@ void Chatbots::setupContent() {
 	_chooserVisible = !current.bot;
 	_usernameWrap->toggle(_chooserVisible.current(), anim::type::instant);
 	const auto username = usernameWrap->entity();
+	username->setInputMethodHints(Qt::ImhLatinOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
 
 	_usernameValue = rpl::single(
 		username->getLastText()
@@ -700,9 +705,10 @@ void Chatbots::setupContent() {
 		if (!resolved) {
 			return;
 		}
-		_committedBot = resolved;
 		_committedRecipients = _recipients.current();
 		_committedPermissions = _resolvePermissions();
+		_permissions = _committedPermissions;
+		_committedBot = resolved;
 		_chooserVisible = false;
 		_usernameWrap->toggle(false, anim::type::instant);
 		controller()->showToast(Ui::Toast::Config{
@@ -870,8 +876,13 @@ void Chatbots::save() {
 			show->showToast(tr::lng_chatbots_not_supported(tr::now));
 		}
 	};
+	const auto bot = _committedBot.current();
+	if (bot) {
+		_committedRecipients = _recipients.current();
+		_committedPermissions = _resolvePermissions();
+	}
 	controller()->session().data().chatbots().save({
-		.bot = _committedBot.current(),
+		.bot = bot,
 		.recipients = _committedRecipients,
 		.permissions = _committedPermissions,
 	}, [=] {

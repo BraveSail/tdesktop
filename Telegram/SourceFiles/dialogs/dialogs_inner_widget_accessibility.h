@@ -9,9 +9,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_key.h"
 
+namespace Data {
+class Folder;
+} // namespace Data
+
 namespace Dialogs {
 
 class Row;
+class FakeRow;
 
 enum class SubItem : int {
 	Type,
@@ -44,6 +49,8 @@ enum class SubItem : int {
 [[nodiscard]] QString RowAccessibilityName(
 	not_null<const Row*> row,
 	FilterId filterId);
+[[nodiscard]] QString CollapsedRowAccessibilityName(
+	not_null<Data::Folder*> folder);
 [[nodiscard]] QString SubItemLabel(SubItem item);
 [[nodiscard]] QString SubItemValue(
 	not_null<const Row*> row,
@@ -52,5 +59,12 @@ enum class SubItem : int {
 [[nodiscard]] std::vector<SubItem> ActiveSubItems(
 	not_null<const Row*> row,
 	FilterId filterId);
+
+[[nodiscard]] QString HashtagAccessibilityName(QStringView tag);
+[[nodiscard]] QString PeerSearchResultAccessibilityName(
+	not_null<PeerData*> peer,
+	bool sponsored);
+[[nodiscard]] QString SearchedMessageAccessibilityName(
+	not_null<const FakeRow*> row);
 
 } // namespace Dialogs

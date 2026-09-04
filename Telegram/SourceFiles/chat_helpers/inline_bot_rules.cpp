@@ -33,6 +33,14 @@ constexpr auto kPatternCacheCapacity = 200;
 	return Core::App().settings();
 }
 
+[[nodiscard]] QString ReadPrefString(std::string_view key) {
+	return QString::fromUtf8(AppSettings().readPref<QByteArray>(key));
+}
+
+void WritePrefString(std::string_view key, const QString &value) {
+	AppSettings().writePref<QByteArray>(key, value.toUtf8());
+}
+
 [[nodiscard]] QJsonArray RulesToJson(
 		const std::vector<InlineBotRules::RuleItem> &rules) {
 	auto result = QJsonArray();
@@ -69,9 +77,8 @@ constexpr auto kPatternCacheCapacity = 200;
 }
 
 [[nodiscard]] QStringList DisabledRemoteUsernames() {
-	return AppSettings().readPref<QString>(
-		Core::kEnhancedAutoInlineBotDisabledRemoteKey
-	).split('\n', Qt::SkipEmptyParts);
+	return ReadPrefString(Core::kEnhancedAutoInlineBotDisabledRemoteKey)
+		.split('\n', Qt::SkipEmptyParts);
 }
 
 [[nodiscard]] bool RemoteEnabled(const QString &username) {
@@ -154,14 +161,14 @@ struct PatternCache {
 }
 
 void SaveLocal(std::vector<InlineBotRules::RuleItem> rules) {
-	AppSettings().writePref<QString>(
+	WritePrefString(
 		Core::kEnhancedAutoInlineBotLocalRulesKey,
 		SerializeRules(rules));
 	Core::App().saveSettingsDelayed();
 }
 
 [[nodiscard]] bool RemoteNeedsUpdate() {
-	const auto updated = AppSettings().readPref<QString>(
+	const auto updated = ReadPrefString(
 		Core::kEnhancedAutoInlineBotRemoteUpdatedKey).toLongLong();
 	return updated <= 0
 		|| (QDateTime::currentMSecsSinceEpoch() - updated) >= kRemoteTtl;
@@ -242,10 +249,10 @@ void SearchRemote(
 	)).done([=](const MTPmessages_Messages &result) {
 		const auto parsed = ParseRemoteMessages(result);
 		if (parsed.found) {
-			AppSettings().writePref<QString>(
+			WritePrefString(
 				Core::kEnhancedAutoInlineBotRemoteRulesKey,
 				SerializeRules(parsed.rules));
-			AppSettings().writePref<QString>(
+			WritePrefString(
 				Core::kEnhancedAutoInlineBotRemoteUpdatedKey,
 				QString::number(QDateTime::currentMSecsSinceEpoch()));
 			Core::App().saveSettingsDelayed();
@@ -265,15 +272,13 @@ namespace InlineBotRules {
 
 std::vector<RuleItem> RemoteRules() {
 	return ParseRules(
-		AppSettings().readPref<QString>(
-			Core::kEnhancedAutoInlineBotRemoteRulesKey),
+		ReadPrefString(Core::kEnhancedAutoInlineBotRemoteRulesKey),
 		Source::Remote);
 }
 
 std::vector<RuleItem> LocalRules() {
 	return ParseRules(
-		AppSettings().readPref<QString>(
-			Core::kEnhancedAutoInlineBotLocalRulesKey),
+		ReadPrefString(Core::kEnhancedAutoInlineBotLocalRulesKey),
 		Source::Local);
 }
 
@@ -350,7 +355,7 @@ void SetRemoteEnabled(const QString &username, bool enabled) {
 	if (!enabled) {
 		disabled.push_back(normalized);
 	}
-	AppSettings().writePref<QString>(
+	WritePrefString(
 		Core::kEnhancedAutoInlineBotDisabledRemoteKey,
 		disabled.join('\n'));
 	Core::App().saveSettingsDelayed();
@@ -420,16 +425,10 @@ void RefreshRemote(
 		not_null<Main::Session*> session,
 		Fn<void()> done,
 		bool force) {
-	static auto loading = false;
 	if (!force && !RemoteNeedsUpdate()) {
 		Finish(done);
 		return;
 	}
-	if (loading) {
-		Finish(done);
-		return;
-	}
-	loading = true;
 	session->api().request(MTPcontacts_ResolveUsername(
 		MTP_flags(0),
 		MTP_string(QString::fromLatin1(kRemoteMetadataName)),
@@ -440,16 +439,13 @@ void RefreshRemote(
 		session->data().processChats(data.vchats());
 		const auto peer = session->data().peerLoaded(peerFromMTP(data.vpeer()));
 		if (!peer) {
-			loading = false;
 			Finish(done);
 			return;
 		}
 		SearchRemote(session, peer->input(), [=] {
-			loading = false;
 			Finish(done);
 		});
 	}).fail([=] {
-		loading = false;
 		Finish(done);
 	}).send();
 }

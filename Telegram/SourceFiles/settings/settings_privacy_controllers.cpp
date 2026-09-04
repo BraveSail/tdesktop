@@ -53,7 +53,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat_helpers.h"
 #include "styles/style_settings.h"
 #include "styles/style_info.h"
-#include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 
 #include <QtGui/QGuiApplication>
@@ -209,7 +208,8 @@ AdminLog::OwnedItem GenerateForwardedItem(
 		MTPlong(), // paid_message_stars
 		MTPSuggestedPost(),
 		MTPint(), // schedule_repeat_period
-		MTPstring() // summary_from_language
+		MTPstring(), // summary_from_language
+		MTPRichMessage()
 	).match([&](const MTPDmessage &data) {
 		return history->makeMessage(
 			history->nextNonHistoryEntryId(),
@@ -531,8 +531,11 @@ void PhoneNumberPrivacyController::prepareWarningLabel(
 	warning->overrideLinkClickHandler([=] {
 		QGuiApplication::clipboard()->setText(PublicLinkByPhone(
 			_controller->session().user()));
-		_controller->window().showToast(
-			tr::lng_username_copied(tr::now));
+		_controller->window().showToast({
+			.text = { tr::lng_username_copied(tr::now) },
+			.iconLottie = u"toast/voip_invite"_q,
+			.iconLottieSize = st::toastLottieIconSize,
+		});
 	});
 }
 

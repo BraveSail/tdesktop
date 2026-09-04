@@ -10,10 +10,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_suggest_post.h"
 #include "api/api_transcribes.h"
 #include "base/random.h"
+#include "base/options.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/unixtime.h"
+#include "core/application.h"
 #include "core/click_handler_types.h" // ClickHandlerContext
 #include "core/ui_integration.h"
+#include "core/update_checker.h"
 #include "history/view/history_view_cursor_state.h"
 #include "history/history_item_components.h"
 #include "history/history_item_helpers.h"
@@ -29,13 +32,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_summary_header.h"
 #include "history/view/history_view_view_button.h" // ViewButton.
 #include "history/history.h"
+#include "iv/markdown/iv_markdown_article_text.h"
+#include "iv/markdown/iv_markdown_prepare_links.h"
+#include "iv/iv_instance.h"
+#include "iv/iv_rich_page.h"
 #include "boxes/premium_preview_box.h"
 #include "boxes/share_box.h"
 #include "boxes/peers/tag_info_box.h"
+#include "ui/chat/torn_edge.h"
 #include "ui/effects/reaction_fly_animation.h"
 #include "ui/effects/glare.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/text/text_utilities.h"
+#include "ui/text/text_custom_emoji.h"
 #include "ui/text/text_extended_data.h"
 #include "ui/power_saving.h"
 #include "ui/rect.h"
@@ -57,15 +66,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/themes/window_theme.h" // IsNightMode.
 #include "window/window_session_controller.h"
 #include "apiwrap.h"
+#include "api/api_rich_tasks.h"
 #include "main/main_account.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_basic.h"
+#include "styles/style_chat_style.h"
 #include "styles/style_dialogs.h"
+#include "styles/style_iv.h"
 #include "styles/style_polls.h"
 
 namespace HistoryView {
 namespace {
+
+base::options::toggle UnlimitedMessageWidth({
+	.id = kOptionUnlimitedMessageWidth,
+	.name = "Unlimited message width",
+	.description = "Allow text-only message bubbles "
+		"to expand beyond the default maximum width.",
+	.restartRequired = true,
+});
 
 constexpr auto kPlayStatusLimit = 2;
 constexpr auto kMaxWidth = (1 << 16) - 1;
@@ -106,6 +126,260 @@ constexpr auto kTranslationLoadingLines = 2;
 	return false;
 }
 
+[[nodiscard]] int RevealLineRight(const Ui::Text::LineLayoutInfo &line) {
+	return line.left + line.width;
+}
+
+using PreparedLink = Iv::Markdown::PreparedLink;
+using PreparedLinkKind = Iv::Markdown::PreparedLinkKind;
+using MediaActivation = Iv::Markdown::MediaActivation;
+using MediaActivationKind = Iv::Markdown::MediaActivationKind;
+using MarkdownArticleSelectionPosition = Iv::Markdown::MarkdownArticleSelectionPosition;
+using MarkdownArticleSelection = Iv::Markdown::MarkdownArticleSelection;
+using MarkdownArticleSelectionEndpoint = Iv::Markdown::MarkdownArticleSelectionEndpoint;
+using MarkdownArticleSelectionEndpoints = Iv::Markdown::MarkdownArticleSelectionEndpoints;
+
+[[nodiscard]] auto FlatSelectionEndpointFromState(const TextState &state)
+-> MessageSelectionFlatEndpoint {
+	return state.selectionCursor.isFlat()
+		? state.selectionCursor.flat
+		: MessageSelectionFlatEndpoint{
+			.symbol = state.symbol,
+			.afterSymbol = state.afterSymbol,
+		};
+}
+
+void SetRichPageSelectionCursor(
+		not_null<TextState*> state,
+		int segment,
+		int offset,
+		bool direct) {
+	state->selectionCursor = MessageSelectionEndpoint::RichPage(
+		{
+			.segment = segment,
+			.offset = offset,
+		},
+		MarkdownArticleSelectionEndpoint{
+			.segment = segment,
+			.direct = direct,
+		});
+}
+
+[[nodiscard]] MarkdownArticleSelection AdjustRichPageSelection(
+		const Iv::Markdown::MarkdownArticle &article,
+		MarkdownArticleSelectionPosition anchor,
+		MarkdownArticleSelectionPosition focus,
+		TextSelectType type) {
+	if (anchor.segment == focus.segment) {
+		const auto adjusted = article.adjustSelection(
+			anchor.segment,
+			TextSelection(
+				uint16(std::min(anchor.offset, focus.offset)),
+				uint16(std::max(anchor.offset, focus.offset))),
+			type);
+		return {
+			.from = { .segment = anchor.segment, .offset = adjusted.from },
+			.to = { .segment = anchor.segment, .offset = adjusted.to },
+		};
+	}
+	const auto focusBeforeAnchor = CompareMessageSelectionPositions(
+		focus,
+		anchor) < 0;
+	const auto anchorExpanded = article.adjustSelection(
+		anchor.segment,
+		TextSelection(uint16(anchor.offset), uint16(anchor.offset)),
+		type);
+	const auto focusExpanded = article.adjustSelection(
+		focus.segment,
+		TextSelection(uint16(focus.offset), uint16(focus.offset)),
+		type);
+	return {
+		.from = {
+			.segment = anchor.segment,
+			.offset = focusBeforeAnchor
+				? int(anchorExpanded.to)
+				: int(anchorExpanded.from),
+		},
+		.to = {
+			.segment = focus.segment,
+			.offset = focusBeforeAnchor
+				? int(focusExpanded.from)
+				: int(focusExpanded.to),
+		},
+	};
+}
+
+[[nodiscard]] QString OpenableTargetForPreparedLink(const PreparedLink &link) {
+	return link.fragment.isEmpty()
+		? link.target
+		: (link.target + u"#"_q + link.fragment);
+}
+
+[[nodiscard]] ClickHandler::TextEntity TextEntityForPreparedLink(
+		const PreparedLink &link) {
+	if (const auto external = ExternalEntityLinkData(link)) {
+		return {
+			.type = external->type,
+			.data = external->data,
+		};
+	}
+	return {};
+}
+
+[[nodiscard]] QString CopyTextForPreparedLink(const PreparedLink &link) {
+	if (const auto external = ExternalEntityLinkData(link)) {
+		return external->text;
+	}
+	switch (link.kind) {
+	case PreparedLinkKind::Anchor:
+	case PreparedLinkKind::FootnoteBacklink:
+		return link.target.isEmpty() ? QString() : (u"#"_q + link.target);
+	case PreparedLinkKind::Footnote:
+		return !link.copyText.isEmpty() ? link.copyText : link.target;
+	case PreparedLinkKind::LocalFile:
+	case PreparedLinkKind::InstantViewPage:
+		return OpenableTargetForPreparedLink(link);
+	case PreparedLinkKind::External:
+		return link.target;
+	case PreparedLinkKind::RejectedRelative:
+	case PreparedLinkKind::ToggleDetails:
+	case PreparedLinkKind::ToggleBlockquote:
+		return QString();
+	}
+	return QString();
+}
+
+[[nodiscard]] QString CopyLabelForPreparedLink(const PreparedLink &link) {
+	if (const auto external = ExternalEntityLinkData(link)) {
+		return (external->type == EntityType::Email)
+			? Ui::Integration::Instance().phraseContextCopyEmail()
+			: Ui::Integration::Instance().phraseContextCopyLink();
+	}
+	switch (link.kind) {
+	case PreparedLinkKind::RejectedRelative:
+	case PreparedLinkKind::ToggleDetails:
+	case PreparedLinkKind::ToggleBlockquote:
+		return QString();
+	case PreparedLinkKind::External:
+	case PreparedLinkKind::InstantViewPage:
+	case PreparedLinkKind::Anchor:
+	case PreparedLinkKind::Footnote:
+	case PreparedLinkKind::FootnoteBacklink:
+	case PreparedLinkKind::LocalFile:
+		return tr::lng_context_copy_link(tr::now);
+	}
+	return QString();
+}
+
+void CopyRichPageCodeBlockText(TextForMimeData text, ClickContext context) {
+	if (context.button != Qt::LeftButton || text.empty()) {
+		return;
+	} else if (!text.rich.text.endsWith('\n')) {
+		text.rich.text.append('\n');
+	}
+	if (!text.expanded.endsWith('\n')) {
+		text.expanded.append('\n');
+	}
+	if (Ui::Integration::Instance().copyPreOnClick(context.other)) {
+		TextUtilities::SetClipboardText(std::move(text));
+	}
+}
+
+[[nodiscard]] bool SamePreparedLink(
+		const std::optional<PreparedLink> &a,
+		const std::optional<PreparedLink> &b) {
+	if (!a || !b) {
+		return !a && !b;
+	}
+	return (a->index == b->index)
+		&& (a->kind == b->kind)
+		&& (a->target == b->target)
+		&& (a->fragment == b->fragment)
+		&& (a->copyText == b->copyText)
+		&& (a->entityType == b->entityType)
+		&& (a->shown == b->shown)
+		&& (a->webpageId == b->webpageId);
+}
+
+[[nodiscard]] bool SameEmbedRequest(
+		const Iv::Markdown::EmbedRequest &a,
+		const Iv::Markdown::EmbedRequest &b) {
+	return (a.html == b.html)
+		&& (a.url == b.url)
+		&& (a.width == b.width)
+		&& (a.height == b.height)
+		&& (a.fullWidth == b.fullWidth)
+		&& (a.fixedHeight == b.fixedHeight)
+		&& (a.allowScrolling == b.allowScrolling);
+}
+
+[[nodiscard]] bool SameMediaActivation(
+		const MediaActivation &a,
+		const MediaActivation &b) {
+	return (a.kind == b.kind)
+		&& (a.url == b.url)
+		&& SameEmbedRequest(a.embed, b.embed)
+		&& (a.placeholderId.value == b.placeholderId.value)
+		&& (a.photo.get() == b.photo.get())
+		&& (a.document.get() == b.document.get())
+		&& (a.channel.get() == b.channel.get());
+}
+
+[[nodiscard]] std::optional<Iv::Markdown::PreparedEditListItemSource>
+RichPageTaskMarkerHit(
+		const Iv::Markdown::MarkdownArticle &article,
+		QPoint point) {
+	const auto hit = article.editControlHitTest(point);
+	using Kind = Iv::Markdown::MarkdownArticleEditControlHitKind;
+	return (hit.kind == Kind::TaskMarker) ? hit.listItem : std::nullopt;
+}
+
+class RichPageActionClickHandler final : public ClickHandler {
+public:
+	RichPageActionClickHandler(
+		Fn<void(ClickContext)> callback,
+		std::optional<PreparedLink> link = std::nullopt)
+	: _callback(std::move(callback))
+	, _link(std::move(link)) {
+	}
+
+	void onClick(ClickContext context) const override {
+		if (_callback) {
+			_callback(std::move(context));
+		}
+	}
+
+	QString url() const override {
+		return _link ? _link->target : QString();
+	}
+
+	QString copyToClipboardText() const override {
+		return _link ? CopyTextForPreparedLink(*_link) : QString();
+	}
+
+	QString copyToClipboardContextItemText() const override {
+		return _link ? CopyLabelForPreparedLink(*_link) : QString();
+	}
+
+	TextEntity getTextEntity() const override {
+		return _link ? TextEntityForPreparedLink(*_link) : TextEntity();
+	}
+
+	QString tooltip() const override {
+		return _link
+			? Iv::Markdown::TooltipForPreparedLink(*_link)
+			: QString();
+	}
+
+	[[nodiscard]] const std::optional<PreparedLink> &link() const {
+		return _link;
+	}
+
+private:
+	const Fn<void(ClickContext)> _callback;
+	const std::optional<PreparedLink> _link;
+};
+
 void ApplyRevealGradient(
 		not_null<const TextAppearing*> appearing,
 		QImage &cache,
@@ -142,7 +416,10 @@ void ApplyRevealGradient(
 	auto p = QPainter(&cache);
 	p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
 	if (lineRtl) {
-		const auto rightEdge = availableWidth - revealedWidth;
+		const auto clampedAvailableWidth = std::min(
+			std::max(availableWidth, 0),
+			cacheW);
+		const auto rightEdge = clampedAvailableWidth - revealedWidth;
 		p.fillRect(
 			QRect(0, 0, rightEdge, cacheH),
 			Qt::transparent);
@@ -229,6 +506,9 @@ struct BadgePillGeometry {
 
 } // namespace
 
+const char kOptionUnlimitedMessageWidth[]
+	= "unlimited-message-width";
+
 struct Message::CommentsButton {
 	std::unique_ptr<Ui::RippleAnimation> ripple;
 	std::vector<UserpicInRow> userpics;
@@ -291,6 +571,9 @@ Message::Message(
 	}
 	initLogEntryOriginal();
 	initPsa();
+	if (data->displayHiddenSenderInfo()) {
+		AddComponents(HiddenSenderTooltip::Bit());
+	}
 	setupReactions(replacing);
 	auto animation = replacing ? replacing->takeEffectAnimation() : nullptr;
 	if (animation) {
@@ -336,6 +619,355 @@ Message::~Message() {
 		_comments = nullptr;
 		_fromNameStatus = nullptr;
 		checkHeavyPart();
+	}
+}
+
+void HistoryMessageRichPage::Host::requestRepaint(QRect articleRect) {
+	if (const auto strong = owner.get()) {
+		crl::on_main(strong, [weak = owner, articleRect] {
+			if (const auto owner = weak.get()) {
+				owner->requestRichPageRepaint(articleRect);
+			}
+		});
+	}
+}
+
+void HistoryMessageRichPage::Host::requestRelayout(QRect articleRect) {
+	if (const auto strong = owner.get()) {
+		crl::on_main(strong, [weak = owner, articleRect] {
+			if (const auto owner = weak.get()) {
+				owner->requestRichPageRelayout(articleRect);
+			}
+		});
+	}
+}
+
+HistoryMessageRichPage::HistoryMessageRichPage()
+: host(std::make_unique<Host>())
+, article(st::messageMarkdown) {
+}
+
+void Message::setInstantViewMediaRuntime(QString pageUrl) {
+	Expects(Has<InstantViewMediaRuntime>()
+		|| !Has<HistoryMessageRichPage>());
+	// We mustn't add the component here if we're in rich message,
+	// because we call this method where we remember RichPage reference.
+
+	AddComponents(InstantViewMediaRuntime::Bit());
+	Get<InstantViewMediaRuntime>()->pageUrl = std::move(pageUrl);
+}
+
+bool Message::hasRichPage() const {
+	return (richpage() != nullptr);
+}
+
+void Message::requestRichPageRepaint(QRect articleRect) const {
+	Q_UNUSED(articleRect);
+	repaint();
+}
+
+void Message::requestRichPageRelayout(QRect articleRect) {
+	Q_UNUSED(articleRect);
+	if (const auto rich = const_cast<Message*>(this)->richpage()) {
+		rich->article.invalidateLayout();
+	}
+	// The article layout was just invalidated, but textHeightFor() caches by
+	// _textWidth and would short-circuit when re-queried at the same (constant)
+	// max width, leaving the bubble sized from a stale, now-zeroed
+	// lastLayoutWidth(). Drop the text-size cache too so the article is really
+	// laid out again, the same way blockquoteExpandChanged() does for quotes.
+	invalidateTextSizeCache();
+	setPendingResize();
+	history()->owner().requestViewResize(this);
+}
+
+void Message::activateRichPagePreparedLink(
+		const PreparedLink &link,
+		ClickContext context) const {
+	if (context.button != Qt::LeftButton
+		&& context.button != Qt::MiddleButton) {
+		return;
+	}
+	const auto resolveInlineAnchor = [owner = const_cast<Message*>(this)](
+			const QString &anchorId) {
+		if (anchorId.isEmpty()) {
+			return false;
+		}
+		const auto rich = owner->richpage();
+		if (!rich) {
+			return false;
+		}
+		auto top = rich->article.anchorTop(anchorId);
+		auto trect = QRect();
+		auto haveTrect = false;
+		if (top < 0) {
+			const auto expansion = rich->article.expandDetailsToAnchor(anchorId);
+			if (expansion.changed) {
+				haveTrect = owner->prepareRichPageTextRect(trect);
+				if (!haveTrect) {
+					return false;
+				}
+				const auto rect = owner->richPageRect(trect);
+				rich->article.resizeGetHeight(rect.width());
+				top = rich->article.anchorTop(anchorId);
+				owner->requestRichPageRelayout(QRect());
+			} else {
+				top = rich->article.anchorTop(anchorId);
+			}
+			if (top < 0) {
+				return false;
+			}
+		}
+		if (!haveTrect && !owner->prepareRichPageTextRect(trect)) {
+			return false;
+		}
+		return owner->delegate()->elementScrollToLocalY(
+			owner,
+			owner->richPageRect(trect).top() + top);
+	};
+	switch (link.kind) {
+	case PreparedLinkKind::External:
+		if (const auto data = ExternalEntityLinkData(link)) {
+			if (const auto handler = Ui::Integration::Instance()
+					.createLinkHandler(*data, Ui::Text::MarkedContext())) {
+				handler->onClick(std::move(context));
+			}
+		}
+		break;
+	case PreparedLinkKind::InstantViewPage: {
+		const auto target = OpenableTargetForPreparedLink(link);
+		if (target.isEmpty()) {
+			return;
+		}
+		if (const auto controller = ExtractController(context)) {
+			Core::App().iv().openWithIvPreferred(
+				controller,
+				target,
+				context.other);
+		} else {
+			UrlClickHandler::Open(target, context.other);
+		}
+	} break;
+	case PreparedLinkKind::Anchor:
+	case PreparedLinkKind::Footnote:
+	case PreparedLinkKind::FootnoteBacklink: {
+		if (resolveInlineAnchor(link.target)) {
+			break;
+		}
+		const auto rich = richpage();
+		if (rich && rich->page && rich->page->part) {
+			if (const auto controller = ExtractController(context)) {
+				Core::App().iv().showRichMessage(
+					controller,
+					data(),
+					link.target);
+			}
+		} else if (const auto controller = ExtractController(context)) {
+			controller->showToast(
+				tr::lng_iv_not_found_in_message(tr::now));
+		}
+		break;
+	}
+	case PreparedLinkKind::LocalFile: {
+		const auto target = OpenableTargetForPreparedLink(link);
+		if (!target.isEmpty()) {
+			UrlClickHandler::Open(target, context.other);
+		}
+	} break;
+	case PreparedLinkKind::RejectedRelative:
+		break;
+	case PreparedLinkKind::ToggleDetails:
+		if (const auto rich = const_cast<Message*>(this)->richpage()
+			; rich && rich->article.toggleDetails(link.target)) {
+			const_cast<Message*>(this)->requestRichPageRelayout(QRect());
+		}
+		break;
+	case PreparedLinkKind::ToggleBlockquote:
+		if (const auto rich = const_cast<Message*>(this)->richpage()
+			; rich && rich->article.toggleBlockquote(link.target)) {
+			const_cast<Message*>(this)->requestRichPageRelayout(QRect());
+		}
+		break;
+	}
+}
+
+QRect Message::richPageRect(QRect trect) const {
+	trect.setTop(trect.top() + st::mediaInBubbleSkip);
+	return trect.marginsAdded(
+		{ st::msgPadding.left(), 0, st::msgPadding.right(), 0 });
+}
+
+bool Message::prepareRichPageTextRect(QRect &trect) const {
+	if (!hasVisibleText()) {
+		return false;
+	}
+	const auto item = data();
+	const auto media = this->media();
+	auto g = countGeometry();
+	if (g.width() < 1 || isHidden() || !drawBubble()) {
+		return false;
+	}
+	const auto reactionsInBubble = _reactions && embedReactionsInBubble();
+	const auto mediaDisplayed = media && media->isDisplayed();
+	if (_reactions && !reactionsInBubble) {
+		g.setHeight(g.height() - st::mediaInBubbleSkip - _reactions->height());
+	}
+	if (const auto keyboard = item->inlineReplyKeyboard()) {
+		g.setHeight(
+			g.height()
+			- st::msgBotKbButton.margin
+			- keyboard->naturalHeight());
+	}
+	auto inner = g;
+	if (_comments) {
+		inner.setHeight(inner.height() - st::historyCommentsButtonHeight);
+	}
+	trect = inner.marginsRemoved(st::msgPadding);
+	const auto additionalInfoSkip = (mediaDisplayed
+		&& !media->additionalInfoString().isEmpty())
+		? st::msgDateFont->height
+		: 0;
+	const auto reactionsTop = (reactionsInBubble && !_viewButton)
+		? (additionalInfoSkip + st::mediaInBubbleSkip)
+		: additionalInfoSkip;
+	const auto reactionsHeight = reactionsInBubble
+		? (reactionsTop + _reactions->height())
+		: 0;
+	if (reactionsInBubble) {
+		trect.setHeight(trect.height() - reactionsHeight);
+	}
+	if (_viewButton) {
+		trect.setHeight(trect.height() - _viewButton->height());
+		if (reactionsInBubble) {
+			trect.setHeight(
+				trect.height()
+				- st::mediaInBubbleSkip
+				+ st::msgPadding.bottom());
+		} else if (mediaDisplayed) {
+			trect.setHeight(trect.height() - st::mediaInBubbleSkip);
+		}
+	}
+	const auto check = factcheckBlock();
+	const auto entry = logEntryOriginal();
+	const auto mediaOnBottom = (mediaDisplayed && media->isBubbleBottom())
+		|| check
+		|| entry;
+	const auto mediaOnTop = (mediaDisplayed && media->isBubbleTop())
+		|| (entry && entry->isBubbleTop());
+	if (mediaOnBottom) {
+		trect.setHeight(trect.height() + st::msgPadding.bottom());
+	}
+	if (mediaOnTop) {
+		trect.setY(trect.y() - st::msgPadding.top());
+	} else {
+		if (displayFromName()) {
+			trect.setTop(trect.top() + st::msgNameFont->height);
+		}
+		if (const auto badge = Get<EphemeralBadge>()) {
+			trect.setTop(trect.top() + badge->height);
+		}
+		if (displayedTopicButton()) {
+			trect.setTop(trect.top()
+				+ st::topicButtonSkip
+				+ st::topicButtonPadding.top()
+				+ st::msgNameFont->height
+				+ st::topicButtonPadding.bottom()
+				+ st::topicButtonSkip);
+		}
+		if (displayForwardedFrom()) {
+			const auto forwarded = item->Get<HistoryMessageForwarded>();
+			const auto skip = forwarded->psaType.isEmpty()
+				? 0
+				: st::historyPsaIconSkip1;
+			const auto fits = (forwarded->text.maxWidth()
+				<= (trect.width() - skip));
+			trect.setTop(trect.top()
+				+ ((fits ? 1 : 2) * st::semiboldFont->height));
+		}
+		if (item->Has<HistoryMessageVia>()
+			&& !displayFromName()
+			&& !displayForwardedFrom()) {
+			trect.setTop(trect.top() + st::msgNameFont->height);
+		}
+		if (const auto reply = Get<Reply>()) {
+			trect.setTop(trect.top() + reply->height());
+		}
+		if (const auto summaryHeader = Get<SummaryHeader>()) {
+			trect.setTop(trect.top() + summaryHeader->height());
+		}
+	}
+	if (entry) {
+		trect.setHeight(trect.height() - entry->height());
+	}
+	if (check) {
+		trect.setHeight(
+			trect.height()
+			- check->height()
+			- st::mediaInBubbleSkip);
+	}
+	if (mediaDisplayed && _invertMedia) {
+		const auto mediaTop = trect.y()
+			+ (mediaOnTop ? 0 : st::mediaInBubbleSkip);
+		trect.setY(mediaTop
+			+ media->height()
+			+ (mediaOnBottom ? 0 : st::mediaInBubbleSkip));
+	}
+	return true;
+}
+
+QPoint Message::prepareRichPageStateRect(QPoint point, QRect &trect) const {
+	if (const auto botTop = Get<FakeBotAboutTop>()) {
+		trect.setY(trect.y() + botTop->height);
+	}
+	trect = richPageRect(trect);
+	return point - trect.topLeft();
+}
+
+void Message::activateRichPageMedia(
+		const MediaActivation &activation,
+		ClickContext context) const {
+	if (context.button != Qt::LeftButton
+		&& context.button != Qt::MiddleButton) {
+		return;
+	}
+	switch (activation.kind) {
+	case MediaActivationKind::None:
+		break;
+	case MediaActivationKind::Embed:
+		if (!activation.embed.url.isEmpty()) {
+			HiddenUrlClickHandler::Open(
+				activation.embed.url,
+				context.other);
+		}
+		break;
+	case MediaActivationKind::ExternalUrl:
+		if (!activation.url.isEmpty()) {
+			HiddenUrlClickHandler::Open(activation.url, context.other);
+		}
+		break;
+	case MediaActivationKind::Photo:
+		if (activation.photo) {
+			activation.photo->open(context.button);
+		}
+		break;
+	case MediaActivationKind::Document:
+		if (activation.document) {
+			activation.document->open(context.button);
+		}
+		break;
+	case MediaActivationKind::OpenChannel:
+		if (activation.channel) {
+			activation.channel->open(context.button);
+		}
+		break;
+	case MediaActivationKind::JoinChannel:
+		if (activation.channel) {
+			activation.channel->join(context.button);
+		}
+		break;
+	case MediaActivationKind::UnsupportedBlock:
+		Core::UpdateApplication();
+		break;
 	}
 }
 
@@ -417,7 +1049,7 @@ void Message::refreshRightBadge() {
 	if (const auto badge = Get<RightBadge>(); badge && badge->overridden) {
 		return;
 	}
-	if (hasOutLayout()) {
+	if (hasOutLayout() || context() == Context::WelcomeMessages) {
 		if (Has<RightBadge>()) {
 			RemoveComponents(RightBadge::Bit());
 		}
@@ -624,6 +1256,9 @@ auto Message::takeEffectAnimation()
 }
 
 QRect Message::effectIconGeometry() const {
+	if (hidesBottomInfo()) {
+		return {};
+	}
 	const auto item = data();
 	const auto media = this->media();
 
@@ -669,7 +1304,7 @@ QRect Message::effectIconGeometry() const {
 			const auto belowInfo = _viewButton->belowMessageInfo();
 			const auto infoHeight = reactionsInBubble
 				? (reactionsHeight + 2 * st::mediaInBubbleSkip)
-				: _bottomInfo.height();
+				: bottomInfoHeight();
 			const auto heightMargins = QMargins(0, 0, 0, infoHeight);
 			if (belowInfo) {
 				inner -= heightMargins;
@@ -791,11 +1426,15 @@ QSize Message::performCountOptimalSize() {
 	const auto botTop = item->isFakeAboutView()
 		? Get<FakeBotAboutTop>()
 		: nullptr;
+	const auto ephemeralBadge = Get<EphemeralBadge>();
 	const auto bubble = drawBubble();
 	auto withVisibleText = false;
 	auto fullTextualWidth = 0;
 	if (botTop) {
 		botTop->init();
+	}
+	if (ephemeralBadge) {
+		ephemeralBadge->init(this);
 	}
 
 	auto maxWidth = 0;
@@ -851,7 +1490,11 @@ QSize Message::performCountOptimalSize() {
 			maxWidth = std::max(maxWidth, st::msgMaxWidth);
 			accumulate_max(nonTextMax, st::msgMaxWidth);
 		}
-		minHeight = withVisibleText ? text().minHeight() : 0;
+		minHeight = withVisibleText
+			? hasRichPage()
+				? textHeightFor(bubbleTextWidth(textualWidth))
+				: text().minHeight()
+			: 0;
 		if (withVisibleText && translationLoading) {
 			minHeight += TranslationLoadingAdditionalHeight();
 		}
@@ -913,7 +1556,7 @@ QSize Message::performCountOptimalSize() {
 			// Count parts in maxWidth(), don't count them in minHeight().
 			// They will be added in resizeGetHeight() anyway.
 			if (displayFromName()) {
-				const auto from = item->displayFrom();
+				const auto from = displayFrom();
 				validateFromNameText(from);
 				const auto &name = from
 					? _fromName
@@ -991,6 +1634,10 @@ QSize Message::performCountOptimalSize() {
 			accumulate_max(nonTextMax, botTop->maxWidth);
 			minHeight += botTop->height;
 		}
+		if (ephemeralBadge) {
+			accumulate_max(maxWidth, ephemeralBadge->maxWidth);
+			accumulate_max(nonTextMax, ephemeralBadge->maxWidth);
+		}
 		accumulate_max(maxWidth, minWidthForMedia());
 		accumulate_max(nonTextMax, minWidthForMedia());
 		_nonTextMaxWidth = std::min(nonTextMax, kMaxWidth);
@@ -1014,7 +1661,9 @@ QSize Message::performCountOptimalSize() {
 		}
 	}
 	if (bubble && withVisibleText && maxWidth < fullTextualWidth) {
-		minHeight -= text().minHeight();
+		minHeight -= hasRichPage()
+			? textHeightFor(bubbleTextWidth(bubbleTextualWidth()))
+			: text().minHeight();
 		minHeight += textHeightFor(bubbleTextWidth(maxWidth));
 	}
 	if (const auto appearing = Get<TextAppearing>()) {
@@ -1275,27 +1924,57 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 		context.highlightPathCache->clear();
 	}
 	if (bubble) {
-		if (displayFromName()
-			&& item->displayFrom()
-			&& (_fromNameVersion < item->displayFrom()->nameVersion())) {
+		const auto from = displayFromName() ? displayFrom() : nullptr;
+		if (from && (_fromNameVersion < from->nameVersion())) {
 			fromNameUpdated(g.width());
 		}
-
-		Ui::PaintBubble(
-			p,
-			Ui::ComplexBubble{
-				.simple = Ui::SimpleBubble{
-					.st = context.st,
-					.geometry = g,
-					.pattern = context.bubblesPattern,
-					.patternViewport = context.viewport,
-					.outerWidth = width(),
-					.selected = context.selected(),
-					.outbg = context.outbg,
-					.rounding = countBubbleRounding(messageRounding),
-				},
-				.selection = mediaSelectionIntervals,
-			});
+		const auto simple = Ui::SimpleBubble{
+			.st = context.st,
+			.geometry = g,
+			.pattern = context.bubblesPattern,
+			.patternViewport = context.viewport,
+			.outerWidth = width(),
+			.selected = context.selected(),
+			.outbg = context.outbg,
+			.rounding = countBubbleRounding(messageRounding),
+		};
+		const auto rich = const_cast<Message*>(this)->richpage();
+		auto richPageGaps = std::vector<Ui::BubbleSelectionInterval>();
+		if (rich && rich->hasUnsupportedBlocks) {
+			auto richTrect = QRect();
+			if (prepareRichPageTextRect(richTrect)) {
+				const auto origin = richPageRect(richTrect).topLeft();
+				const auto rects = rich->article.unsupportedNoticeRects();
+				richPageGaps.reserve(rects.size());
+				for (const auto &notice : rects) {
+					const auto mapped = notice.translated(origin);
+					richPageGaps.push_back({
+						mapped.y(),
+						mapped.height(),
+					});
+				}
+			}
+		}
+		if (!richPageGaps.empty()) {
+			if (!rich->tornEdges) {
+				rich->tornEdges = std::make_unique<Ui::TornEdgeCache>();
+			}
+			Ui::ValidateTornEdges(*rich->tornEdges, g.width());
+			Ui::PaintBubble(
+				p,
+				Ui::BubbleWithGaps{
+					.simple = simple,
+					.gaps = richPageGaps,
+					.torn = rich->tornEdges.get(),
+				});
+		} else {
+			Ui::PaintBubble(
+				p,
+				Ui::ComplexBubble{
+					.simple = simple,
+					.selection = mediaSelectionIntervals,
+				});
+		}
 
 		auto inner = g;
 		paintCommentsButton(p, inner, context);
@@ -1328,7 +2007,7 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 			const auto belowInfo = _viewButton->belowMessageInfo();
 			const auto infoHeight = reactionsInBubble
 				? (reactionsHeight + 2 * st::mediaInBubbleSkip)
-				: _bottomInfo.height();
+				: bottomInfoHeight();
 			const auto heightMargins = QMargins(0, 0, 0, infoHeight);
 			_viewButton->draw(
 				p,
@@ -1354,6 +2033,7 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 			trect.setY(trect.y() - st::msgPadding.top());
 		} else {
 			paintFromName(p, trect, context);
+			paintEphemeralBadge(p, trect, context);
 			paintTopicButton(p, trect, context);
 			validateForwardedNameText(item);
 			paintForwardedInfo(p, trect, context);
@@ -1592,6 +2272,10 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 
 	if (hasGesture) {
 		p.translate(-context.gestureHorizontal.translation, 0);
+		if (context.reactionInfo && context.reactionInfo->effectPaint) {
+			const auto shift = context.gestureHorizontal.translation;
+			context.reactionInfo->effectOffset += QPoint(shift, 0);
+		}
 
 		constexpr auto kShiftRatio = 1.5;
 		constexpr auto kBouncePart = 0.25;
@@ -1667,53 +2351,59 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 		p.translate(-selectionTranslation, 0);
 	}
 	if (selectionModeResult.progress) {
-		const auto progress = selectionModeResult.progress;
-		if (progress <= 1.) {
-			if (context.selected()) {
-				if (!_selectionRoundCheckbox) {
-					_selectionRoundCheckbox
-						= std::make_unique<Ui::RoundCheckbox>(
-							st::msgSelectionCheck,
-							[this] { repaint(); });
+		if (!context.skipSelectionCheck) {
+			const auto progress = selectionModeResult.progress;
+			if (progress <= 1.) {
+				if (context.selected()) {
+					if (!_selectionRoundCheckbox) {
+						_selectionRoundCheckbox
+							= std::make_unique<Ui::RoundCheckbox>(
+								st::msgSelectionCheck,
+								[this] { repaint(); });
+					}
 				}
+				if (_selectionRoundCheckbox) {
+					_selectionRoundCheckbox->setChecked(
+						context.selected(),
+						anim::type::normal);
+				}
+				const auto o = ScopedPainterOpacity(p, progress);
+				const auto &st = st::msgSelectionCheck;
+				const auto right = (delegate()->elementChatMode()
+					== ElementChatMode::Wide)
+					? std::min(
+						int(_bubbleWidthLimit
+							+ st::msgPhotoSkip
+							+ st::msgSelectionOffset
+							+ st::msgPadding.left()
+							+ st.size),
+						width())
+					: width();
+				const auto pos = QPoint(
+					(right
+						- (st::msgSelectionOffset * progress - st.size) / 2
+						- st::msgPadding.right() / 2
+						- st.size
+						- st::historyScroll.deltax),
+					rect::bottom(g) - st.size - st::msgSelectionBottomSkip);
+				{
+					p.setPen(QPen(st.border, st.width));
+					p.setBrush(context.st->msgServiceBg());
+					auto hq = PainterHighQualityEnabler(p);
+					p.drawEllipse(QRect(pos, Size(st.size)));
+				}
+				if (_selectionRoundCheckbox) {
+					_selectionRoundCheckbox->paint(
+						p,
+						pos.x(),
+						pos.y(),
+						width());
+				}
+			} else {
+				_selectionRoundCheckbox = nullptr;
 			}
-			if (_selectionRoundCheckbox) {
-				_selectionRoundCheckbox->setChecked(
-					context.selected(),
-					anim::type::normal);
-			}
-			const auto o = ScopedPainterOpacity(p, progress);
-			const auto &st = st::msgSelectionCheck;
-			const auto right = (delegate()->elementChatMode()
-				== ElementChatMode::Wide)
-				? std::min(
-					int(_bubbleWidthLimit
-						+ st::msgPhotoSkip
-						+ st::msgSelectionOffset
-						+ st::msgPadding.left()
-						+ st.size),
-					width())
-				: width();
-			const auto pos = QPoint(
-				(right
-					- (st::msgSelectionOffset * progress - st.size) / 2
-					- st::msgPadding.right() / 2
-					- st.size
-					- st::historyScroll.deltax),
-				rect::bottom(g) - st.size - st::msgSelectionBottomSkip);
-			{
-				p.setPen(QPen(st.border, st.width));
-				p.setBrush(context.st->msgServiceBg());
-				auto hq = PainterHighQualityEnabler(p);
-				p.drawEllipse(QRect(pos, Size(st.size)));
-			}
-			if (_selectionRoundCheckbox) {
-				_selectionRoundCheckbox->paint(p, pos.x(), pos.y(), width());
-			}
-		} else {
-			_selectionRoundCheckbox = nullptr;
 		}
-	} else {
+	} else if (!context.skipSelectionCheck) {
 		_selectionRoundCheckbox = nullptr;
 	}
 }
@@ -1859,8 +2549,7 @@ void Message::paintFromName(
 	}
 
 	const auto stm = context.messageStyle();
-
-	const auto from = item->displayFrom();
+	const auto from = displayFrom();
 	const auto info = from ? nullptr : item->displayHiddenSenderInfo();
 	Assert(from || info);
 	const auto nameFg = FromNameFg(
@@ -1877,9 +2566,12 @@ void Message::paintFromName(
 	const auto statusWidth = _fromNameStatus
 		? st::dialogsPremiumIcon.icon.width()
 		: 0;
+	const auto nameAvailableWidth = (statusWidth && availableWidth > statusWidth)
+		? (availableWidth - statusWidth)
+		: availableWidth;
 	if (statusWidth && availableWidth > statusWidth) {
 		const auto x = availableLeft
-			+ std::min(availableWidth - statusWidth, nameText->maxWidth());
+			+ std::min(nameAvailableWidth, nameText->maxWidth());
 		const auto y = trect.top();
 		auto color = nameFg;
 		color.setAlpha(115);
@@ -1887,7 +2579,7 @@ void Message::paintFromName(
 		if (_fromNameStatus->id != id) {
 			const auto that = const_cast<Message*>(this);
 			_fromNameStatus->custom = id
-				? std::make_unique<Ui::Text::LimitedLoopsEmoji>(
+				? MakeWrappedEmoji<Ui::Text::LimitedLoopsEmoji>(
 					history()->owner().customEmojiManager().create(
 						Data::EmojiStatusCustomId(id),
 						[=] { that->customEmojiRepaint(); }),
@@ -1919,7 +2611,16 @@ void Message::paintFromName(
 	const auto nameLinkHandler = fromLink();
 	const auto nameWidth = std::min(
 		nameText->maxWidth(),
-		availableWidth);
+		nameAvailableWidth);
+	if (!from) {
+		if (const auto tooltip = Get<HiddenSenderTooltip>()) {
+			tooltip->linkRect = QRect(
+				availableLeft,
+				trect.top(),
+				nameWidth,
+				st::msgNameFont->height);
+		}
+	}
 	paintLinkRipple(
 		p,
 		nameLinkHandler,
@@ -1927,7 +2628,7 @@ void Message::paintFromName(
 		trect.topLeft());
 	nameText->draw(p, {
 		.position = { availableLeft, trect.top() },
-		.availableWidth = availableWidth,
+		.availableWidth = nameAvailableWidth,
 		.elisionLines = 1,
 	});
 	const auto skipWidth = nameText->maxWidth()
@@ -2061,6 +2762,30 @@ void Message::paintFromName(
 	trect.setY(trect.y() + st::msgNameFont->height);
 }
 
+void Message::paintEphemeralBadge(
+		Painter &p,
+		QRect &trect,
+		const PaintContext &context) const {
+	const auto badge = Get<EphemeralBadge>();
+	if (!badge || badge->text.isEmpty()) {
+		return;
+	}
+	const auto stm = context.messageStyle();
+	const auto &icon = stm->historyEphemeralIcon;
+	const auto iconTop = trect.y()
+		+ (st::msgNameStyle.font->height - icon.height()) / 2;
+	icon.paint(p, trect.x(), iconTop, width());
+	const auto skip = icon.width() + st::historyEphemeralIconSkip;
+	p.setPen(stm->msgServiceFg);
+	badge->text.drawLeftElided(
+		p,
+		trect.x() + skip,
+		trect.y(),
+		trect.width() - skip,
+		width());
+	trect.setY(trect.y() + badge->height);
+}
+
 void Message::paintTopicButton(
 		Painter &p,
 		QRect &trect,
@@ -2182,20 +2907,36 @@ void Message::paintForwardedInfo(
 			&& _linkRipple->link
 			&& !_linkRipple->ripple
 			&& rippleBelongsHere;
+		const auto hiddenTooltip = Get<HiddenSenderTooltip>();
+		const auto recomputeHidden = hiddenTooltip
+			&& (hiddenTooltip->cachedWidth != useWidth);
+		const auto hiddenSenderRange = recomputeHidden
+			? forwarded->text.linkRangeFor(
+				HiddenSenderInfo::ForwardClickHandler())
+			: TextSelection();
 		auto highlightPath = QPainterPath();
 		auto highlightRequest = Ui::Text::HighlightInfoRequest{
-			.range = rippleLinkRange,
+			.range = needRippleMask ? rippleLinkRange : hiddenSenderRange,
 			.outPath = &highlightPath,
 		};
+		const auto needHighlight = needRippleMask
+			|| !hiddenSenderRange.empty();
 		forwarded->text.draw(p, {
 			.position = { trect.x(), trect.y() },
 			.availableWidth = useWidth,
 			.palette = &fwdPalette,
 			.paused = p.inactive(),
-			.highlight = needRippleMask ? &highlightRequest : nullptr,
+			.highlight = needHighlight ? &highlightRequest : nullptr,
 			.elisionLines = 2,
 			.elisionBreakEverywhere = breakEverywhere,
 		});
+		if (recomputeHidden) {
+			hiddenTooltip->cachedWidth = useWidth;
+			if (!hiddenSenderRange.empty() && !highlightPath.isEmpty()) {
+				hiddenTooltip->linkRect
+					= highlightPath.boundingRect().toRect();
+			}
+		}
 		if (needRippleMask && !highlightPath.isEmpty()) {
 			createLinkRippleMask(
 				highlightPath,
@@ -2311,6 +3052,11 @@ void Message::paintText(
 			width());
 		trect.setY(trect.y() + botTop->height);
 	}
+	if (const auto rich = const_cast<Message*>(this)->richpage()) {
+	    paintRichText(p, rich, richPageRect(trect), context);
+		return;
+	}
+
 	if (!context.clip.intersects(trect)
 		&& context.skipDrawingParts == PaintContext::SkipDrawingParts::None
 		&& !context.gestureHorizontal.translation) {
@@ -2509,6 +3255,110 @@ void Message::paintTranslationLoading(
 	p.restore();
 }
 
+void Message::paintRichText(
+		Painter &p,
+		not_null<HistoryMessageRichPage*> rich,
+		QRect rect,
+		const PaintContext &context) const {
+	const auto stm = context.messageStyle();
+	const auto paletteVersion = context.st->paletteVersion();
+	if (rich->paletteVersion != paletteVersion) {
+		rich->paletteVersion = paletteVersion;
+		rich->article.invalidatePaletteCache();
+	}
+	const auto appearing = Get<TextAppearing>();
+	const auto appearingClip = appearing
+		&& appearing->use
+		&& (appearing->shownLine < int(appearing->lines.size()));
+	const auto viewportClip = QRect(
+		QPoint(),
+		rect.size()
+	).intersected(context.clip.translated(-rect.topLeft()));
+	auto articleClip = viewportClip;
+	if (appearingClip) {
+		const auto &line = appearing->lines[appearing->shownLine];
+		const auto shownHeight = std::min(
+			std::max(appearing->shownHeight, 0),
+			std::max(line.bottom, 0));
+		articleClip = articleClip.intersected(QRect(
+			0,
+			0,
+			rect.width(),
+			shownHeight));
+	}
+	rich->article.setVisibleTopBottom(
+		std::clamp(viewportClip.top(), 0, rect.height()),
+		std::clamp(viewportClip.bottom() + 1, 0, rect.height()));
+	auto articleContext = Iv::Markdown::MarkdownArticlePaintContext(
+		context).translated(-rect.topLeft());
+	if (context.messageSelection && context.messageSelection->isRichPage()) {
+		articleContext.selectionState.selection
+			= context.messageSelection->richPage.selection;
+		articleContext.selectionState.endpoints
+			= &context.messageSelection->richPage.endpoints;
+	}
+	articleContext.clip = articleClip;
+	articleContext.bubbleGradient = usesBubblePattern(context);
+	articleContext.buttonLoading.owner = &data()->history()->owner();
+	articleContext.buttonLoading.itemId = data()->fullId();
+	articleContext.caches = {
+		.pre = stm->preCache.get(),
+		.blockquote = context.quoteCache(
+			contentColorCollectible(),
+			contentColorIndex()),
+		.thinking = &rich->thinkingPaintCache,
+		.pathShiftGradient = delegate()->elementPathShiftGradient().get(),
+		.colors = context.st->highlightColors(),
+		.st = &stm->richPageStyle,
+		.repaint = [weak = base::make_weak(const_cast<Message*>(this))] {
+			if (const auto owner = weak.get()) {
+				owner->requestRichPageRepaint(QRect());
+			}
+		},
+		.repaintRect = [weak = base::make_weak(const_cast<Message*>(this))](
+				QRect articleRect) {
+			if (const auto owner = weak.get()) {
+				owner->requestRichPageRepaint(articleRect);
+			}
+		},
+	};
+	auto revealPostprocess
+		= std::optional<Iv::Markdown::MarkdownArticleRevealPostprocess>();
+	auto revealState
+		= std::optional<Iv::Markdown::MarkdownArticleRevealPaintState>();
+	if (appearingClip) {
+		revealPostprocess.emplace(
+			Iv::Markdown::MarkdownArticleRevealPostprocess{
+				.method = [=](
+						int lineIndex,
+						int availableWidth) -> Fn<void(QImage&)> {
+					if (lineIndex != appearing->shownLine
+						|| appearing->revealedLineWidth
+							>= appearing->lines[lineIndex].width) {
+						return nullptr;
+					}
+					return [=](QImage &cache) {
+						ApplyRevealGradient(
+							appearing,
+							cache,
+							availableWidth);
+					};
+				},
+				.cache = &appearing->lineCache,
+			});
+		revealState.emplace(Iv::Markdown::MarkdownArticleRevealPaintState{
+			.activeLine = appearing->shownLine,
+			.nextLine = 0,
+			.postprocess = &*revealPostprocess,
+		});
+		articleContext.reveal = &*revealState;
+	}
+	p.save();
+	p.translate(rect.topLeft());
+	rich->article.paint(p, articleContext);
+	p.restore();
+}
+
 PointState Message::pointState(QPoint point) const {
 	auto g = countGeometry();
 	if (g.width() < 1 || isHidden()) {
@@ -2688,6 +3538,64 @@ void Message::clickHandlerPressedChanged(
 		&& IsRippleLink(handler)
 		&& !text().linkRangeFor(handler).empty()) {
 		startLinkRipple();
+	} else if (const auto rich = richpage()
+		; rich
+		&& ((handler == rich->handler)
+			|| (handler == rich->handlerHorizontalScrollPressed)
+			|| (handler == rich->handlerButtonRowHandler)
+			|| (handler == rich->pressedButtonRowHandler)
+			|| (handler == rich->handlerInlineButtonHandler)
+			|| (handler == rich->pressedInlineButtonHandler))) {
+		if (pressed) {
+			if ((handler == rich->handler)
+				&& rich->handlerHorizontalScrollHit
+				&& rich->article.beginHorizontalScroll(
+					rich->handlerHorizontalScrollPoint,
+					false)) {
+				rich->handlerHorizontalScrollActive = true;
+				rich->handlerHorizontalScrollPressed = handler;
+			}
+		} else if (rich->handlerHorizontalScrollActive
+			&& (handler == rich->handlerHorizontalScrollPressed)) {
+			rich->article.endHorizontalScroll();
+			rich->handlerHorizontalScrollActive = false;
+			rich->handlerHorizontalScrollPressed = nullptr;
+		}
+		if ((handler == rich->handler) && rich->handlerPlaceholderId) {
+			if (pressed) {
+				rich->article.addPlaceholderRipple(
+					rich->handlerPlaceholderId,
+					rich->handlerPlaceholderPoint);
+			} else {
+				rich->article.stopPlaceholderRipple(rich->handlerPlaceholderId);
+			}
+		}
+		if (pressed) {
+			if ((handler == rich->handlerButtonRowHandler)
+				&& (rich->handlerButtonRow.index >= 0)) {
+				rich->pressedButtonRow = rich->handlerButtonRow;
+				rich->pressedButtonRowHandler = handler;
+				rich->article.addButtonRowRipple(
+					rich->pressedButtonRow.id,
+					rich->pressedButtonRow.index,
+					rich->pressedButtonRow.localPoint);
+			}
+		} else if (handler == rich->pressedButtonRowHandler) {
+			rich->article.stopButtonRowRipple(rich->pressedButtonRow.id);
+			rich->pressedButtonRow = {};
+			rich->pressedButtonRowHandler = nullptr;
+		}
+		if (pressed) {
+			if ((handler == rich->handlerInlineButtonHandler)
+				&& rich->handlerInlineButtonPoint) {
+				rich->pressedInlineButtonHandler = handler;
+				rich->article.addInlineButtonRipple(
+					*rich->handlerInlineButtonPoint);
+			}
+		} else if (handler == rich->pressedInlineButtonHandler) {
+			rich->article.stopInlineButtonRipple();
+			rich->pressedInlineButtonHandler = nullptr;
+		}
 	} else if (_reactions) {
 		_reactions->clickHandlerPressedChanged(
 			handler,
@@ -3053,6 +3961,11 @@ bool Message::hasFromPhoto() const {
 	switch (context()) {
 	case Context::AdminLog:
 		return true;
+	case Context::WelcomeMessages:
+		if (const auto channel = data()->history()->peer->asBroadcast()) {
+			return channel->signatureProfiles();
+		}
+		return true;
 	case Context::Monoforum:
 		return (delegate()->elementChatMode() == ElementChatMode::Wide);
 	case Context::History:
@@ -3073,6 +3986,11 @@ bool Message::hasFromPhoto() const {
 			|| item->isFakeAboutView()
 			|| isCommentsRootView()) {
 			return false;
+		}
+		if (item->isEphemeral()) {
+			if (const auto channel = item->history()->peer->asBroadcast()) {
+				return channel->signatureProfiles();
+			}
 		}
 		const auto mode = delegate()->elementChatMode();
 		if (mode != ElementChatMode::Default) {
@@ -3111,7 +4029,7 @@ TextState Message::textState(
 	const auto minSymbol = (_invertMedia && request.onlyMessageText)
 		? visibleMediaTextLen
 		: 0;
-	result.symbol = minSymbol;
+	SetTextStatePosition(&result, minSymbol, false);
 
 	auto g = countGeometry();
 	if (g.width() < 1 || isHidden()) {
@@ -3137,7 +4055,7 @@ TextState Message::textState(
 		g.setHeight(g.height() - reactionsHeight);
 		const auto reactionsPosition = QPoint(reactionsLeft + g.left(), g.top() + g.height() + st::mediaInBubbleSkip);
 		if (_reactions->getState(point - reactionsPosition, &result)) {
-			result.symbol += visibleMediaTextLen + visibleTextLen;
+			AddTextStateOffset(&result, visibleMediaTextLen + visibleTextLen);
 			return result;
 		}
 	}
@@ -3151,7 +4069,7 @@ TextState Message::textState(
 		if (item->isHistoryEntry() || item->isAdminLogEntry()) {
 			const auto keyboardPosition = QPoint(g.left(), g.top() + g.height() + st::msgBotKbButton.margin);
 			if (QRect(keyboardPosition, QSize(g.width(), keyboardHeight)).contains(point)) {
-				result.symbol += visibleMediaTextLen + visibleTextLen;
+				AddTextStateOffset(&result, visibleMediaTextLen + visibleTextLen);
 				result.link = keyboard->getLink(point - keyboardPosition);
 				return result;
 			}
@@ -3169,7 +4087,7 @@ TextState Message::textState(
 
 		auto inner = g;
 		if (getStateCommentsButton(point, inner, &result)) {
-			result.symbol += visibleMediaTextLen + visibleTextLen;
+			AddTextStateOffset(&result, visibleMediaTextLen + visibleTextLen);
 			return result;
 		}
 		auto trect = inner.marginsRemoved(st::msgPadding);
@@ -3187,7 +4105,7 @@ TextState Message::textState(
 			trect.setHeight(trect.height() - reactionsHeight);
 			const auto reactionsPosition = QPoint(trect.left(), trect.top() + trect.height() + reactionsTop);
 			if (_reactions->getState(point - reactionsPosition, &result)) {
-				result.symbol += visibleMediaTextLen + visibleTextLen;
+				AddTextStateOffset(&result, visibleMediaTextLen + visibleTextLen);
 				return result;
 			}
 		}
@@ -3195,7 +4113,7 @@ TextState Message::textState(
 			const auto belowInfo = _viewButton->belowMessageInfo();
 			const auto infoHeight = reactionsInBubble
 				? (reactionsHeight + 2 * st::mediaInBubbleSkip)
-				: _bottomInfo.height();
+				: bottomInfoHeight();
 			const auto heightMargins = QMargins(0, 0, 0, infoHeight);
 			if (_viewButton->getState(
 					point,
@@ -3203,7 +4121,7 @@ TextState Message::textState(
 						? inner
 						: inner - heightMargins),
 					&result)) {
-				result.symbol += visibleMediaTextLen + visibleTextLen;
+				AddTextStateOffset(&result, visibleMediaTextLen + visibleTextLen);
 				return result;
 			}
 			if (belowInfo) {
@@ -3224,6 +4142,9 @@ TextState Message::textState(
 		} else if (inBubble) {
 			if (getStateFromName(point, trect, &result)) {
 				return result;
+			}
+			if (const auto badge = Get<EphemeralBadge>()) {
+				trect.setTop(trect.top() + badge->height);
 			}
 			if (getStateTopicButton(point, trect, &result)) {
 				return result;
@@ -3250,8 +4171,9 @@ TextState Message::textState(
 				result = entry->textState(
 					point - QPoint(entryLeft, entryTop),
 					request);
-				result.symbol += visibleTextLength()
-					+ visibleMediaTextLength();
+				AddTextStateOffset(
+					&result,
+					visibleTextLength() + visibleMediaTextLength());
 			}
 		}
 		if (check) {
@@ -3263,8 +4185,9 @@ TextState Message::textState(
 				result = check->textState(
 					point - QPoint(checkLeft, checkTop),
 					request);
-				result.symbol += visibleTextLength()
-					+ visibleMediaTextLength();
+				AddTextStateOffset(
+					&result,
+					visibleTextLength() + visibleMediaTextLength());
 			}
 		}
 
@@ -3286,7 +4209,7 @@ TextState Message::textState(
 		};
 		if (!inBubble) {
 			if (point.y() >= g.y() + g.height()) {
-				result.symbol += visibleTextLen + visibleMediaTextLen;
+				AddTextStateOffset(&result, visibleTextLen + visibleMediaTextLen);
 			}
 		} else if (result.symbol <= minSymbol) {
 			const auto mediaHeight = mediaDisplayed ? media->height() : 0;
@@ -3306,20 +4229,18 @@ TextState Message::textState(
 					request);
 				if (_invertMedia) {
 					if (request.onlyMessageText) {
-						result.symbol = minSymbol;
-						result.afterSymbol = false;
+						SetTextStatePosition(&result, minSymbol, false);
 						result.cursor = CursorState::None;
 					}
 				} else if (request.onlyMessageText) {
-					result.symbol = visibleTextLen;
-					result.afterSymbol = false;
+					SetTextStatePosition(&result, visibleTextLen, false);
 					result.cursor = CursorState::None;
 				} else {
-					result.symbol += visibleTextLen;
+					AddTextStateOffset(&result, visibleTextLen);
 				}
 			} else if (getStateText(point, trect, &result, request)) {
 				if (_invertMedia) {
-					result.symbol += visibleMediaTextLen;
+					AddTextStateOffset(&result, visibleMediaTextLen);
 				}
 				result.overMessageText = true;
 				checkBottomInfoState();
@@ -3356,11 +4277,10 @@ TextState Message::textState(
 	} else if (media && media->isDisplayed()) {
 		result = media->textState(point - g.topLeft(), request);
 		if (request.onlyMessageText) {
-			result.symbol = 0;
-			result.afterSymbol = false;
+			SetTextStatePosition(&result, 0, false);
 			result.cursor = CursorState::None;
 		}
-		result.symbol += visibleTextLength();
+		AddTextStateOffset(&result, visibleTextLength());
 	}
 
 	return result;
@@ -3429,7 +4349,7 @@ bool Message::getStateFromName(
 			availableWidth -= st::msgPadding.right() + badgeWidth;
 		}
 		const auto item = data();
-		const auto from = item->displayFrom();
+		const auto from = displayFrom();
 		const auto nameText = [&]() -> const Ui::Text::String * {
 			if (from) {
 				validateFromNameText(from);
@@ -3685,8 +4605,7 @@ bool Message::getStateForwardedInfo(
 		if (outResult->link) {
 			recordLinkRipplePoint(point, trect.topLeft());
 		}
-		outResult->symbol = 0;
-		outResult->afterSymbol = false;
+		SetTextStatePosition(outResult, 0, false);
 		if (breakEverywhere) {
 			outResult->cursor = CursorState::Forwarded;
 		} else {
@@ -3817,10 +4736,189 @@ bool Message::getStateText(
 		StateRequest request) const {
 	if (!hasVisibleText()) {
 		return false;
-	} else if (const auto botTop = Get<FakeBotAboutTop>()) {
-		trect.setY(trect.y() + botTop->height);
 	}
 	const auto item = this->textItem();
+	if (const auto rich = richpage()) {
+		const auto local = prepareRichPageStateRect(point, trect);
+		if (!base::in_range(point.y(), trect.y(), trect.y() + trect.height())) {
+			return false;
+		}
+		const auto clearHorizontalScrollHandler = [&] {
+			rich->handlerHorizontalScrollHit = std::nullopt;
+			rich->handlerHorizontalScrollPoint = {};
+		};
+		const auto clearButtonRowHandler = [&] {
+			rich->handlerButtonRow = {};
+			rich->handlerButtonRowHandler = nullptr;
+		};
+		const auto clearInlineButtonHandler = [&] {
+			rich->handlerInlineButtonPoint = std::nullopt;
+			rich->handlerInlineButtonHandler = nullptr;
+		};
+		if (const auto task = RichPageTaskMarkerHit(rich->article, local)
+			; task && item->history()->session().api().richTasks()
+				.togglingAllowed(item)) {
+			*outResult = TextState(item);
+			if (!rich->handlerTaskItem || (*rich->handlerTaskItem != *task)) {
+				rich->handlerTaskItem = task;
+				rich->handler = std::make_shared<RichPageActionClickHandler>(
+					[weak = base::make_weak(const_cast<Message*>(this)),
+						source = *task](ClickContext context) {
+						const auto owner = weak.get();
+						const auto item = owner
+							? owner->data().get()
+							: nullptr;
+						if (item) {
+							item->history()->session().api().richTasks()
+								.toggle(item, source);
+						}
+					});
+			}
+			outResult->link = rich->handler;
+			return true;
+		}
+		rich->handlerTaskItem = std::nullopt;
+		const auto horizontalScrollHit = rich->article.horizontalScrollHit(local);
+		*outResult = TextState(item);
+		outResult->horizontalScroll = horizontalScrollHit.scrollable;
+		const auto hit = rich->article.hitTest(
+			local,
+			request.flags | Ui::Text::StateRequest::Flag::LookupSymbol);
+		if (horizontalScrollHit.overScrollbar) {
+			rich->handlerCodeHeaderSegmentIndex = -1;
+			rich->handlerPreparedLink = std::nullopt;
+			rich->handlerMediaActivation = {};
+			rich->handlerPlaceholderId = {};
+			rich->handlerPlaceholderPoint = {};
+			clearButtonRowHandler();
+			clearInlineButtonHandler();
+			if (!rich->handlerHorizontalScrollHit || !rich->handler) {
+				rich->handler = std::make_shared<RichPageActionClickHandler>(
+					[](ClickContext) {
+					});
+			}
+			rich->handlerHorizontalScrollHit = horizontalScrollHit;
+			rich->handlerHorizontalScrollPoint = local;
+			outResult->link = rich->handler;
+			return true;
+		}
+		if (!hit.valid()) {
+			rich->handlerCodeHeaderSegmentIndex = -1;
+			clearHorizontalScrollHandler();
+			clearButtonRowHandler();
+			clearInlineButtonHandler();
+			return horizontalScrollHit.scrollable;
+		}
+		const auto offset = rich->article.selectionOffsetFromHit(
+			hit,
+			TextSelectType::Letters);
+		SetRichPageSelectionCursor(
+			outResult,
+			hit.segmentIndex,
+			offset,
+			hit.direct);
+		if (hit.codeHeaderCopy) {
+			const auto reuse = rich->handler
+				&& (rich->handlerCodeHeaderSegmentIndex == hit.segmentIndex);
+			clearHorizontalScrollHandler();
+			rich->handlerPreparedLink = std::nullopt;
+			rich->handlerMediaActivation = {};
+			rich->handlerPlaceholderId = {};
+			rich->handlerPlaceholderPoint = {};
+			clearButtonRowHandler();
+			clearInlineButtonHandler();
+			if (!reuse) {
+				const auto text = rich->article.textForContext(hit);
+				rich->handlerCodeHeaderSegmentIndex = hit.segmentIndex;
+				rich->handler = std::make_shared<RichPageActionClickHandler>(
+					[text](ClickContext context) {
+						CopyRichPageCodeBlockText(text, std::move(context));
+					});
+			}
+			outResult->link = rich->handler;
+		} else if (hit.preparedLink
+			&& (hit.preparedLink->kind == PreparedLinkKind::External)
+			&& (hit.mediaActivation.kind == MediaActivationKind::None)
+			&& Iv::Markdown::ExtractPreparedLink(hit.state.link)) {
+			rich->handlerCodeHeaderSegmentIndex = -1;
+			clearHorizontalScrollHandler();
+			rich->handlerPreparedLink = std::nullopt;
+			rich->handlerMediaActivation = {};
+			rich->handlerPlaceholderId = {};
+			rich->handlerPlaceholderPoint = {};
+			clearButtonRowHandler();
+			clearInlineButtonHandler();
+			outResult->link = hit.state.link;
+		} else if (hit.preparedLink
+			|| hit.mediaActivation.kind != MediaActivationKind::None) {
+			const auto prepared = hit.preparedLink;
+			const auto activation = hit.mediaActivation;
+			const auto reuse = SamePreparedLink(
+					rich->handlerPreparedLink,
+					prepared)
+				&& SameMediaActivation(
+					rich->handlerMediaActivation,
+					activation);
+			rich->handlerCodeHeaderSegmentIndex = -1;
+			clearHorizontalScrollHandler();
+			rich->handlerPlaceholderId = hit.mediaActivation.placeholderId;
+			rich->handlerPlaceholderPoint = hit.placeholderLocalPoint;
+			clearButtonRowHandler();
+			clearInlineButtonHandler();
+			if (!reuse) {
+				rich->handlerPreparedLink = prepared;
+				rich->handlerMediaActivation = activation;
+				rich->handler = std::make_shared<RichPageActionClickHandler>(
+					[weak = base::make_weak(const_cast<Message*>(this)),
+						prepared,
+						activation](ClickContext context) {
+						if (const auto owner = weak.get()) {
+							if (prepared) {
+								owner->activateRichPagePreparedLink(
+									*prepared,
+									std::move(context));
+							} else {
+								owner->activateRichPageMedia(
+									activation,
+									std::move(context));
+							}
+						}
+					},
+					prepared);
+			}
+			outResult->link = rich->handler;
+		} else {
+			rich->handlerCodeHeaderSegmentIndex = -1;
+			clearHorizontalScrollHandler();
+			if (hit.buttonRow.index >= 0) {
+				rich->handlerButtonRow = hit.buttonRow;
+				rich->handlerButtonRowHandler = hit.state.link;
+			} else {
+				clearButtonRowHandler();
+			}
+			if (hit.inlineButton) {
+				rich->handlerInlineButtonPoint = hit.inlineButton;
+				rich->handlerInlineButtonHandler = hit.state.link;
+			} else {
+				clearInlineButtonHandler();
+			}
+			if (!hit.customTooltip.isEmpty()) {
+				outResult->customTooltip = true;
+				using Flag = Ui::Text::StateRequest::Flag;
+				if (request.flags & Flag::LookupCustomTooltip) {
+					outResult->customTooltipText = hit.customTooltip;
+				}
+			}
+			outResult->link = hit.state.link;
+		}
+		outResult->cursor = (!outResult->link && hit.direct)
+			? CursorState::Text
+			: CursorState::None;
+		return true;
+	}
+	if (const auto botTop = Get<FakeBotAboutTop>()) {
+		trect.setY(trect.y() + botTop->height);
+	}
 	if (base::in_range(point.y(), trect.y(), trect.y() + trect.height())) {
 		*outResult = TextState(item, text().getState(
 			point - trect.topLeft(),
@@ -3838,6 +4936,18 @@ bool Message::getStateText(
 
 // Forward to media.
 void Message::updatePressed(QPoint point) {
+	if (const auto rich = richpage()) {
+		auto trect = QRect();
+		if (prepareRichPageTextRect(trect)) {
+			const auto local = prepareRichPageStateRect(point, trect);
+			rich->article.updatePressed(local);
+			if (rich->handlerHorizontalScrollActive
+				&& (ClickHandler::getPressed()
+					== rich->handlerHorizontalScrollPressed)) {
+				rich->article.updateHorizontalScroll(local);
+			}
+		}
+	}
 	const auto item = data();
 	const auto media = this->media();
 	if (!media) {
@@ -3907,6 +5017,88 @@ void Message::updatePressed(QPoint point) {
 	}
 }
 
+bool Message::consumeHorizontalScroll(
+		QPoint position,
+		int delta,
+		Qt::ScrollPhase phase) {
+	const auto rich = richpage();
+	auto trect = QRect();
+	if (!rich || !prepareRichPageTextRect(trect)) {
+		return false;
+	}
+	return rich->article.consumeHorizontalScroll(
+		prepareRichPageStateRect(position, trect),
+		delta,
+		phase);
+}
+
+bool Message::canConsumeHorizontalScroll(QPoint position, int delta) const {
+	const auto rich = richpage();
+	auto trect = QRect();
+	if (!rich || !prepareRichPageTextRect(trect)) {
+		return false;
+	}
+	return rich->article.canConsumeHorizontalScroll(
+		prepareRichPageStateRect(position, trect),
+		delta);
+}
+
+MessageSelection Message::selectionFromStates(
+		const TextState &anchor,
+		const TextState &current,
+		TextSelectType type) const {
+	if (anchor.selectionCursor.isRichPage()
+		|| current.selectionCursor.isRichPage()) {
+		if (!anchor.selectionCursor.valid()
+			|| !current.selectionCursor.valid()
+			|| !anchor.selectionCursor.isRichPage()
+			|| !current.selectionCursor.isRichPage()) {
+			return {};
+		}
+		auto selection = MarkdownArticleSelection{
+			.from = anchor.selectionCursor.richPagePosition,
+			.to = current.selectionCursor.richPagePosition,
+		};
+		const auto endpoints = MarkdownArticleSelectionEndpoints{
+			.from = anchor.selectionCursor.richPage,
+			.to = current.selectionCursor.richPage,
+		};
+		if (type != TextSelectType::Letters) {
+			const auto rich = richpage();
+			if (!rich) {
+				return {};
+			}
+			selection = AdjustRichPageSelection(
+				rich->article,
+				selection.from,
+				selection.to,
+				type);
+			if (selection.empty()) {
+				return {};
+			}
+		}
+		return MessageSelection::RichPage(
+			selection,
+			endpoints,
+			anchor.selectionCursor.richPagePosition,
+			current.selectionCursor.richPagePosition,
+			anchor.selectionCursor.richPage,
+			current.selectionCursor.richPage);
+	}
+	const auto anchorEndpoint = FlatSelectionEndpointFromState(anchor);
+	const auto currentEndpoint = FlatSelectionEndpointFromState(current);
+	auto selection = TextSelection(
+		uint16(std::min(anchorEndpoint.offset(), currentEndpoint.offset())),
+		uint16(std::max(anchorEndpoint.offset(), currentEndpoint.offset())));
+	if (type != TextSelectType::Letters) {
+		selection = adjustSelection(selection, type);
+	}
+	return MessageSelection::Flat(
+		selection,
+		anchorEndpoint,
+		currentEndpoint);
+}
+
 TextForMimeData Message::selectedText(TextSelection selection) const {
 	const auto media = this->media();
 	auto logEntryOriginalResult = TextForMimeData();
@@ -3941,7 +5133,7 @@ TextForMimeData Message::selectedText(TextSelection selection) const {
 			: skipTextSelection(selection);
 		logEntryOriginalResult = entry->selectedText(originalSelection);
 	}
-	auto &first = mediaBefore ? mediaResult : textResult;
+	const auto &first = mediaBefore ? mediaResult : textResult;
 	auto &second = mediaBefore ? textResult : mediaResult;
 	auto result = first;
 	if (result.empty()) {
@@ -3960,6 +5152,20 @@ TextForMimeData Message::selectedText(TextSelection selection) const {
 		result.append(u"\n\n"_q).append(std::move(logEntryOriginalResult));
 	}
 	return result;
+}
+
+TextForMimeData Message::selectedText(
+		const MessageSelection &selection) const {
+	if (const auto flat = selection.flatSelection(); !flat.empty()) {
+		return selectedText(flat);
+	} else if (selection.isRichPage()) {
+		if (const auto rich = richpage()) {
+			return rich->article.textForSelection(
+				selection.richPage.selection,
+				&selection.richPage.endpoints);
+		}
+	}
+	return {};
 }
 
 SelectedQuote Message::selectedQuote(TextSelection selection) const {
@@ -3983,6 +5189,14 @@ SelectedQuote Message::selectedQuote(TextSelection selection) const {
 		if (media->isDisplayed() || isHiddenByGroup()) {
 			return media->selectedQuote(selection);
 		}
+	}
+	return {};
+}
+
+SelectedQuote Message::selectedQuote(
+		const MessageSelection &selection) const {
+	if (const auto flat = selection.flatSelection(); !flat.empty()) {
+		return selectedQuote(flat);
 	}
 	return {};
 }
@@ -4096,6 +5310,96 @@ TextSelection Message::adjustSelection(
 	return result;
 }
 
+MessageSelection Message::adjustSelection(
+		const MessageSelection &selection,
+		TextSelectType type) const {
+	if (selection.isFlat()) {
+		const auto adjusted = adjustSelection(selection.flatSelection(), type);
+		if (adjusted.empty() || (adjusted == FullSelection)) {
+			return {};
+		}
+		return MessageSelection::Flat(
+			adjusted,
+			selection.anchor.isFlat()
+				? selection.anchor.flat
+				: MessageSelectionFlatEndpoint{
+					.symbol = adjusted.from,
+					.afterSymbol = false,
+				},
+			selection.focus.isFlat()
+				? selection.focus.flat
+				: MessageSelectionFlatEndpoint{
+					.symbol = adjusted.to,
+					.afterSymbol = false,
+				});
+	} else if (selection.isRichPage()) {
+		if (type == TextSelectType::Letters
+			|| !selection.anchor.valid()
+			|| !selection.focus.valid()
+			|| !selection.anchor.isRichPage()
+			|| !selection.focus.isRichPage()) {
+			return selection;
+		}
+		const auto anchor = selection.anchor.richPagePosition;
+		const auto focus = selection.focus.richPagePosition;
+		if (!anchor.valid() || !focus.valid()) {
+			return selection;
+		}
+		const auto rich = richpage();
+		if (!rich) {
+			return {};
+		}
+		const auto adjusted = AdjustRichPageSelection(
+			rich->article,
+			anchor,
+			focus,
+			type);
+		if (adjusted.empty()) {
+			return {};
+		}
+		return MessageSelection::RichPage(
+			adjusted,
+			MarkdownArticleSelectionEndpoints{
+				.from = selection.anchor.richPage,
+				.to = selection.focus.richPage,
+			},
+			anchor,
+			focus,
+			selection.anchor.richPage,
+			selection.focus.richPage);
+	}
+	return {};
+}
+
+TextSelection Message::selectionForEdit(
+		const MessageSelection &selection) const {
+	return selection.isFlat()
+		? selection.flatRangeForEdit()
+		: TextSelection();
+}
+
+bool Message::selectionContains(
+		const MessageSelection &selection,
+		const TextState &state) const {
+	if (!selection.isRichPage()) {
+		return Element::selectionContains(selection, state);
+	}
+	const auto rich = richpage();
+	if (!rich
+		|| !state.overMessageText
+		|| !state.selectionCursor.isRichPage()) {
+		return false;
+	}
+	auto hit = Iv::Markdown::MarkdownArticleHitTestResult();
+	hit.segmentIndex = state.selectionCursor.richPagePosition.segment;
+	hit.forcedOffset = state.selectionCursor.richPagePosition.offset;
+	hit.direct = state.selectionCursor.richPage.direct;
+	return rich->article.selectionContains(
+		selection.richPage.selection,
+		&selection.richPage.endpoints,
+		hit);
+}
+
 Reactions::ButtonParameters Message::reactionButtonParameters(
 		QPoint position,
 		const TextState &reactionState) const {
@@ -4114,6 +5418,7 @@ Reactions::ButtonParameters Message::reactionButtonParameters(
 		? (st::mediaInBubbleSkip + _reactions->height())
 		: 0;
 	result.reactionsHeight = reactionsHeight;
+	result.keyboardHeight = keyboardHeight;
 	const auto innerHeight = geometry.height()
 		- keyboardHeight
 		- reactionsHeight;
@@ -4181,6 +5486,9 @@ void Message::drawInfo(
 		int bottom,
 		int width,
 		InfoDisplayType type) const {
+	if (hidesBottomInfo()) {
+		return;
+	}
 	p.setFont(st::msgDateFont);
 
 	const auto st = context.st;
@@ -4233,6 +5541,9 @@ TextState Message::bottomInfoTextState(
 		int bottom,
 		QPoint point,
 		InfoDisplayType type) const {
+	if (hidesBottomInfo()) {
+		return {};
+	}
 	auto infoRight = right;
 	auto infoBottom = bottom;
 	switch (type) {
@@ -4258,15 +5569,16 @@ TextState Message::bottomInfoTextState(
 }
 
 int Message::infoWidth() const {
-	return _bottomInfo.maxWidth();
+	return hidesBottomInfo() ? 0 : _bottomInfo.maxWidth();
 }
 
 int Message::bottomInfoFirstLineWidth() const {
-	return _bottomInfo.firstLineWidth();
+	return hidesBottomInfo() ? 0 : _bottomInfo.firstLineWidth();
 }
 
 bool Message::bottomInfoIsWide() const {
-	if (_reactions && embedReactionsInBubble()) {
+	if (hidesBottomInfo()
+		|| (_reactions && embedReactionsInBubble())) {
 		return false;
 	}
 	return _bottomInfo.isWide();
@@ -4277,7 +5589,7 @@ bool Message::isSignedAuthorElided() const {
 }
 
 bool Message::embedReactionsInBubble() const {
-	return needInfoDisplay();
+	return usesMessageInfoLayout();
 }
 
 void Message::validateFromNameText(PeerData *from) const {
@@ -4362,7 +5674,15 @@ void Message::refreshDataIdHook() {
 }
 
 int Message::monospaceMaxWidth() const {
-	const auto fromText = hasVisibleText()
+	const auto fromText = hasRichPage()
+		? std::max({
+			textualMaxWidth()
+				- st::msgPadding.left()
+				- st::msgPadding.right(),
+			richpage()->article.lastLayoutWidth(),
+			richPageDemandedTextWidth(),
+		})
+		: hasVisibleText()
 		? text().countMaxMonospaceWidth()
 		: 0;
 	const auto fromMedia = this->media()
@@ -4374,13 +5694,44 @@ int Message::monospaceMaxWidth() const {
 }
 
 int Message::bubbleTextWidth(int bubbleWidth) const {
-	return std::max(bubbleWidth, st::msgMinWidth)
+	// For rich pages the article is laid out exactly at the bubble width,
+	// so richPageWidthFor(bubbleTextWidth(width)) must give width back.
+	// Clamping by msgMinWidth here would lay the article out wider than
+	// the bubble shrunk to its content, painting centered blocks (like
+	// display math formulas) shifted right and cut by the bubble edge.
+	const auto floored = hasRichPage()
+		? bubbleWidth
+		: std::max(bubbleWidth, st::msgMinWidth);
+	return floored
 		- st::msgPadding.left()
 		- st::msgPadding.right();
 }
 
+int Message::richPageDemandedTextWidth() const {
+	const auto rich = richpage();
+	return rich
+		? std::min(
+			rich->article.contentDemandedWidth(),
+			kMaxWidth - st::msgPadding.left() - st::msgPadding.right())
+		: 0;
+}
+
 int Message::bubbleTextualWidth() const {
 	const auto full = textualMaxWidth();
+	if (hasRichPage()) {
+		auto innerWidth = bubbleTextWidth(full);
+		[[maybe_unused]] auto laidOutHeight = textHeightFor(innerWidth);
+		// Horizontally scrolled blocks never fit at readable width.
+		const auto demanded = richPageDemandedTextWidth();
+		if (demanded > innerWidth) {
+			innerWidth = demanded;
+			laidOutHeight = textHeightFor(innerWidth);
+		}
+		const auto laidOutWidth = richpage()->article.lastLayoutWidth();
+		return st::msgPadding.left()
+			+ std::max(laidOutWidth, 1)
+			+ st::msgPadding.right();
+	}
 	const auto media = this->media();
 	if (!hasVisibleText()
 		|| !media
@@ -4427,21 +5778,29 @@ int Message::viewButtonHeight() const {
 
 void Message::updateViewButtonExistence() {
 	const auto item = data();
-	const auto media = item->media();
-	const auto has = (media && ViewButton::MediaHasViewButton(media));
-	if (!has) {
-		_viewButton = nullptr;
-		return;
-	} else if (_viewButton) {
-		return;
-	}
-	auto make = [=](auto &&from) {
+	const auto make = [=](auto &&from) {
 		return std::make_unique<ViewButton>(
 			std::forward<decltype(from)>(from),
 			colorIndex(),
 			[=] { repaint(); });
 	};
-	_viewButton = make(media);
+	if (const auto richPage = item->richPage(); richPage && richPage->part) {
+		const auto itemId = item->fullId();
+		if (_viewButton && _viewButton->matches(itemId)) {
+			return;
+		}
+		_viewButton = make(itemId);
+		return;
+	}
+	const auto media = item->media();
+	if (media && ViewButton::MediaHasViewButton(media)) {
+		if (_viewButton && _viewButton->matches(media)) {
+			return;
+		}
+		_viewButton = make(media);
+		return;
+	}
+	_viewButton = nullptr;
 }
 
 void Message::initLogEntryOriginal() {
@@ -4500,12 +5859,20 @@ bool Message::allowTextSelectionByHandler(
 	if (dynamic_cast<Ui::Text::BlockquoteClickHandler*>(handler.get())) {
 		return true;
 	}
+	if (const auto rich = dynamic_cast<RichPageActionClickHandler*>(
+			handler.get())) {
+		const auto &link = rich->link();
+		if (link && link->kind == PreparedLinkKind::ToggleBlockquote) {
+			return true;
+		}
+	}
 	return false;
 }
 
 bool Message::hasFromName() const {
 	switch (context()) {
 	case Context::AdminLog:
+	case Context::WelcomeMessages:
 		return true;
 	case Context::Monoforum:
 		return data()->out() || data()->from()->isChannel();
@@ -4579,6 +5946,9 @@ bool Message::displayForwardedFrom() const {
 }
 
 bool Message::hasOutLayout() const {
+	if (context() == Context::WelcomeMessages) {
+		return false;
+	}
 	const auto item = data();
 	if (item->history()->peer->isSelf()) {
 		if (const auto forwarded = item->Get<HistoryMessageForwarded>()) {
@@ -4647,7 +6017,16 @@ bool Message::unwrapped() const {
 }
 
 int Message::minWidthForMedia() const {
-	auto result = infoWidth() + 2 * (st::msgDateImgDelta + st::msgDateImgPadding.x());
+	// InstantViewMediaRuntime without a rich page means a media view
+	// hosted inside an article, it doesn't draw a bubble with info.
+	// Rich page messages are real bubbles and need the minimal width.
+	if (Get<InstantViewMediaRuntime>() && !hasRichPage()) {
+		return 0;
+	}
+	auto result = hidesBottomInfo()
+		? 0
+		: infoWidth()
+			+ 2 * (st::msgDateImgDelta + st::msgDateImgPadding.x());
 	const auto views = data()->Get<HistoryMessageViews>();
 	if (data()->repliesAreComments() && !views->replies.text.isEmpty()) {
 		const auto limit = HistoryMessageViews::kMaxRecentRepliers;
@@ -4740,7 +6119,7 @@ std::optional<QSize> Message::rightActionSize() const {
 bool Message::displayFastShare() const {
 	const auto item = data();
 	const auto peer = item->history()->peer;
-	if (!item->allowsForward()) {
+	if (!item->allowsForward() || IsAnchoredEphemeral(item)) {
 		return false;
 	} else if (peer->isChannel()) {
 		return !peer->isMegagroup();
@@ -5022,6 +6401,7 @@ void Message::updateMediaInBubbleState() {
 			|| displayedTopicButton()
 			|| displayForwardedFrom()
 			|| Has<Reply>()
+			|| Has<EphemeralBadge>()
 			|| item->Has<HistoryMessageVia>();
 	};
 	const auto entry = logEntryOriginal();
@@ -5089,7 +6469,7 @@ void Message::fromNameUpdated(int width) const {
 	if (Has<RightBadge>()) {
 		width -= st::msgPadding.right() + rightBadgeWidth();
 	}
-	const auto from = item->displayFrom();
+	const auto from = displayFrom();
 	validateFromNameText(from);
 	if (const auto via = item->Get<HistoryMessageVia>()) {
 		if (!displayForwardedFrom()) {
@@ -5373,7 +6753,13 @@ int Message::resizeContentGetHeight(int newWidth) {
 		}
 	}
 	accumulate_min(contentWidth, maxWidth());
-	_bubbleWidthLimit = std::max(st::msgMaxWidth, monospaceMaxWidth());
+	_bubbleWidthLimit = (UnlimitedMessageWidth.value() && !mediaDisplayed)
+		? 0x3FFFFFF
+		: std::max({
+			st::msgMaxWidth,
+			monospaceMaxWidth(),
+			mediaDisplayed ? media->bubbleWidthLimit() : 0,
+		});
 	accumulate_min(contentWidth, int(_bubbleWidthLimit));
 	const auto textualWidth = bubbleTextualWidth();
 	if (mediaDisplayed) {
@@ -5413,10 +6799,10 @@ int Message::resizeContentGetHeight(int newWidth) {
 			appearing->geometryValid = false;
 			appearing->textWidth = textWidth;
 		}
-		// This may invalidate composer structure by removing TextAppearing.
-		if (!textAppearValidate(appearing)) {
-			appearing = nullptr;
-		}
+		// This may invalidate composer structure: by removing TextAppearing,
+		// or by adding / removing rich page components inside validateText().
+		// Either way the pointer must be taken again.
+		appearing = textAppearValidate() ? Get<TextAppearing>() : nullptr;
 	}
 
 	const auto reactionsInBubble = _reactions && embedReactionsInBubble();
@@ -5434,6 +6820,7 @@ int Message::resizeContentGetHeight(int newWidth) {
 	const auto botTop = item->isFakeAboutView()
 		? Get<FakeBotAboutTop>()
 		: nullptr;
+	const auto ephemeralBadge = Get<EphemeralBadge>();
 	if (bubble) {
 		auto reply = Get<Reply>();
 		auto via = item->Get<HistoryMessageVia>();
@@ -5522,6 +6909,10 @@ int Message::resizeContentGetHeight(int newWidth) {
 			newHeight += st::msgNameFont->height;
 		}
 
+		if (ephemeralBadge) {
+			newHeight += ephemeralBadge->height;
+		}
+
 		if (displayedTopicButton()) {
 			newHeight += st::topicButtonSkip
 				+ st::topicButtonPadding.top()
@@ -5591,9 +6982,14 @@ void Message::invalidateTextDependentCache() {
 	_bubbleTextualWidthCache = 0;
 }
 
-bool Message::textAppearValidate(not_null<TextAppearing*> appearing) {
+bool Message::textAppearValidate() {
 	while (true) {
-		if (!textAppearCheckLine(appearing)) {
+		if (!textAppearCheckLine()) {
+			return false;
+		}
+		// textAppearCheckLine() may have reallocated the composer block.
+		const auto appearing = Get<TextAppearing>();
+		if (!appearing) {
 			return false;
 		} else if (!appearing->use
 			|| appearing->widthAnimation.animating()
@@ -5602,45 +6998,98 @@ bool Message::textAppearValidate(not_null<TextAppearing*> appearing) {
 		}
 		++appearing->shownLine;
 		appearing->revealedLineWidth = 0;
+		appearing->startLineWidth = 0;
+		appearing->targetLineWidth = 0;
 	}
 }
 
-bool Message::textAppearCheckLine(not_null<TextAppearing*> appearing) {
+bool Message::textAppearCheckLine() {
+	auto appearing = Get<TextAppearing>();
+	if (!appearing) {
+		return false;
+	}
 	const auto recount = !appearing->geometryValid;
 	if (recount) {
 		appearing->geometryValid = true;
-		appearing->lines = text().countLinesGeometry(appearing->textWidth);
-		auto &lines = appearing->lines;
-		if (lines.size() > 1 && text().hasSkipBlock()) {
-			const auto &last = lines.back();
-			const auto &prev = lines[lines.size() - 2];
-			if (last.width == skipBlockWidth()
-				&& last.bottom - prev.bottom == skipBlockHeight()) {
-				const auto bottom = last.bottom;
-				lines.pop_back();
-				lines.back().bottom = bottom;
+
+		// validateText() can add or remove runtime components, which
+		// reallocates the composer data block and frees the old one, so
+		// every TextAppearing pointer taken before it is dangling after.
+		validateText();
+		appearing = Get<TextAppearing>();
+		if (!appearing) {
+			return false;
+		}
+		if (const auto rich = richpage()) {
+			const auto articleWidth = richPageWidthFor(appearing->textWidth);
+			appearing->lines = rich->article.countRevealLinesGeometry(
+				articleWidth);
+			if (appearing->lines.empty()) {
+				// textHeightFor() calls validateText() as well.
+				const auto height = textHeightFor(appearing->textWidth);
+				const auto width = std::max(textRealWidth(), 1);
+				appearing = Get<TextAppearing>();
+				if (!appearing) {
+					return false;
+				}
+				if (height > 0) {
+					appearing->lines.push_back({
+						.left = 0,
+						.width = width,
+						.bottom = height,
+						.rtl = false,
+						.baseline = height,
+					});
+				}
+			}
+		} else {
+			appearing->lines = text().countLinesGeometry(
+				appearing->textWidth);
+			auto &lines = appearing->lines;
+			if (lines.size() > 1 && text().hasSkipBlock()) {
+				const auto &last = lines.back();
+				const auto &prev = lines[lines.size() - 2];
+				if (last.width == skipBlockWidth()
+					&& last.bottom - prev.bottom == skipBlockHeight()) {
+					const auto bottom = last.bottom;
+					lines.pop_back();
+					lines.back().bottom = bottom;
+				}
 			}
 		}
 	}
 	const auto lines = int(appearing->lines.size());
 	const auto shown = appearing->shownLine;
 	const auto line = (shown < lines) ? &appearing->lines[shown] : nullptr;
+	const auto finalLineHeight = line
+		? (hasRichPage() && text().hasSkipBlock() && (shown + 1 == lines)
+			? line->bottom + skipBlockHeight()
+			: line->bottom)
+		: 0;
 	const auto use = appearing->use = !anim::Disabled()
 		&& line
 		&& ((shown + 1 < lines)
 			|| (shown + 1 == lines
 				&& ((appearing->revealedLineWidth < line->width)
-					|| (appearing->shownHeight < line->bottom))));
+					|| (appearing->shownHeight < finalLineHeight))));
 	if (!use) {
 		if (data()->isRegular()) {
-			RemoveComponents(TextAppearing::Bit());
+			// We are inside these animations' tick, can't destroy them now.
+			crl::on_main(this, [=] {
+				if (Has<TextAppearing>() && !Get<TextAppearing>()->use) {
+					RemoveComponents(TextAppearing::Bit());
+				}
+			});
 			return false;
 		} else if (recount && lines) {
 			appearing->shownLine = lines - 1;
 			const auto &line = appearing->lines.back();
 			appearing->revealedLineWidth = line.width;
 			appearing->shownWidth = textRealWidth();
-			appearing->shownHeight = line.bottom;
+			appearing->shownHeight = line.bottom
+				+ ((hasRichPage() && text().hasSkipBlock())
+					? skipBlockHeight()
+					: 0);
 			appearing->widthAnimation.stop();
 			appearing->heightAnimation.stop();
 		}
@@ -5736,13 +7185,19 @@ int Message::textAppearTargetHeight(
 	const auto next = appearing->shownLine + 1;
 	const auto lines = int(appearing->lines.size());
 	if (next + 1 >= lines) {
-		return appearing->lines.back().bottom;
+		return appearing->lines.back().bottom
+			+ ((hasRichPage() && text().hasSkipBlock())
+				? skipBlockHeight()
+				: 0);
 	}
 	const auto &line = appearing->lines[next];
 	const auto bottom = line.bottom;
-	const auto nextWidth = line.width;
+	const auto rich = hasRichPage();
+	const auto nextWidth = rich ? RevealLineRight(line) : line.width;
 	const auto available = std::max(
-		appearing->lines[appearing->shownLine].width,
+		(rich
+			? RevealLineRight(appearing->lines[appearing->shownLine])
+			: appearing->lines[appearing->shownLine].width),
 		appearing->shownWidth);
 	if (nextWidth + skipBlockWidth() <= available && !line.rtl) {
 		return bottom;
@@ -5752,26 +7207,36 @@ int Message::textAppearTargetHeight(
 
 void Message::textAppearWidthCallback() {
 	const auto appearing = Get<TextAppearing>();
+	if (!appearing) {
+		return;
+	}
 	const auto now = int(base::SafeRound(
 		appearing->widthAnimation.value(appearing->targetLineWidth)));
 	if (now != appearing->revealedLineWidth) {
 		appearing->revealedLineWidth = now;
-		if (appearing->lines[appearing->shownLine].rtl) {
+		const auto &line = appearing->lines[appearing->shownLine];
+		if (line.rtl) {
 			appearing->shownWidth = textRealWidth();
 		} else {
+			const auto shownWidth = hasRichPage()
+				? line.left + now + skipBlockWidth()
+				: now + skipBlockWidth();
 			appearing->shownWidth = std::min(
 				std::max(
 					appearing->shownWidth,
-					now + skipBlockWidth()),
+					shownWidth),
 				textRealWidth());
 		}
 		repaint();
 	}
-	textAppearValidate(appearing);
+	textAppearValidate();
 }
 
 void Message::textAppearHeightCallback() {
 	const auto appearing = Get<TextAppearing>();
+	if (!appearing) {
+		return;
+	}
 	const auto now = int(base::SafeRound(
 		appearing->heightAnimation.value(appearing->targetHeight)));
 	if (const auto delta = now - appearing->shownHeight) {
@@ -5780,10 +7245,14 @@ void Message::textAppearHeightCallback() {
 		history()->viewHeightAdjusted(this, delta);
 		repaint();
 	}
-	textAppearValidate(appearing);
+	textAppearValidate();
 }
 
-bool Message::needInfoDisplay() const {
+int Message::bottomInfoHeight() const {
+	return hidesBottomInfo() ? 0 : _bottomInfo.height();
+}
+
+bool Message::usesMessageInfoLayout() const {
 	const auto media = this->media();
 	const auto mediaDisplayed = media ? media->isDisplayed() : false;
 	const auto check = factcheckBlock();
@@ -5797,6 +7266,10 @@ bool Message::needInfoDisplay() const {
 			: true);
 }
 
+bool Message::needInfoDisplay() const {
+	return !hidesBottomInfo() && usesMessageInfoLayout();
+}
+
 bool Message::invertMedia() const {
 	return _invertMedia;
 }
@@ -5805,13 +7278,16 @@ bool Message::hasVisibleText() const {
 	const auto textItem = this->textItem();
 	if (!textItem) {
 		return false;
+	}
+	const auto media = this->media();
+	if (hasRichPage()) {
+		return !media || !media->hideMessageText();
 	} else if (textItem->emptyText()) {
 		if (const auto media = textItem->media()) {
 			return media->storyExpired() || media->storyUnsupported();
 		}
 		return false;
 	}
-	const auto media = this->media();
 	return !media || !media->hideMessageText();
 }
 
@@ -5859,7 +7335,10 @@ void Message::refreshInfoSkipBlock(HistoryItem *textItem) {
 			_reactions->removeSkipBlock();
 		}
 	}
-	validateTextSkipBlock(hasTextSkipBlock, skipWidth, skipHeight);
+	validateTextSkipBlock(
+		!hidesBottomInfo() && hasTextSkipBlock,
+		skipWidth,
+		skipHeight);
 }
 
 TimeId Message::displayedEditDate() const {

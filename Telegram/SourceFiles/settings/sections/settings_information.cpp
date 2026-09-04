@@ -48,7 +48,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_premium_limits.h"
 #include "info/profile/info_profile_values.h"
 #include "info/profile/info_profile_badge.h"
+#include "info/profile/info_profile_phone_menu.h"
 #include "lang/lang_keys.h"
+#include "menu/menu_mark_as_read.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
 #include "main/main_domain.h"
@@ -65,7 +67,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "base/random.h"
 #include "styles/style_chat.h" // popupMenuExpandedSeparator
-#include "styles/style_dialogs.h" // dialogsPremiumIcon
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 #include "styles/style_menu_icons.h"
@@ -140,7 +141,7 @@ ComposedBadge::ComposedBadge(
 		) | rpl::then(
 			session->data().unreadBadgeChanges()
 		) | rpl::map([=] {
-			auto &owner = session->data();
+			const auto &owner = session->data();
 			return Badge::UnreadBadge{
 				owner.unreadWithMentionsBadge(),
 				owner.unreadWithMentionsBadgeMuted(),
@@ -283,6 +284,7 @@ void SetupPhoto(
 		targets->uploadPhoto = upload;
 	}
 
+	upload->setVideoAllowed(true);
 	upload->chosenImages(
 	) | rpl::on_next([=](Ui::UserpicButton::ChosenImage &&chosen) {
 		auto &image = chosen.image;
@@ -292,9 +294,10 @@ void SetupPhoto(
 		self->session().api().peerPhoto().upload(
 			self,
 			{
-				std::move(image),
-				chosen.markup.documentId,
-				chosen.markup.colors,
+				.image = std::move(image),
+				.markupDocumentId = chosen.markup.documentId,
+				.markupColors = chosen.markup.colors,
+				.video = std::move(chosen.video),
 			});
 		if (!isMarkup) {
 			photo->showUploadProgress();
@@ -343,12 +346,19 @@ void SetupPhoto(
 void ShowMenu(
 		QWidget *parent,
 		const QString &copyButton,
-		const QString &text) {
-	const auto menu = Ui::CreateChild<Ui::PopupMenu>(parent);
+		const QString &text,
+		const style::icon *copyIcon = nullptr,
+		Fn<void(not_null<Ui::PopupMenu*>)> extend = nullptr) {
+	const auto menu = Ui::CreateChild<Ui::PopupMenu>(
+		parent,
+		extend ? st::popupMenuWithIcons : st::defaultPopupMenu);
 
 	menu->addAction(copyButton, [=] {
 		QGuiApplication::clipboard()->setText(text);
-	});
+	}, copyIcon);
+	if (extend) {
+		extend(menu);
+	}
 	menu->popup(QCursor::pos());
 }
 
@@ -358,13 +368,31 @@ not_null<Ui::SettingsButton*> AddRow(
 		rpl::producer<TextWithEntities> value,
 		const QString &copyButton,
 		Fn<void()> edit,
-		IconDescriptor &&descriptor) {
-	const auto wrap = AddButtonWithLabel(
-		container,
-		std::move(label),
-		std::move(value) | rpl::map([](const auto &t) { return t.text; }),
-		st::settingsButton,
-		std::move(descriptor));
+		IconDescriptor &&descriptor,
+		bool markedValue = false,
+		Fn<void(not_null<Ui::PopupMenu*>)> menuExtender = nullptr,
+		const style::icon *copyIcon = nullptr) {
+	const auto wrap = markedValue
+		? AddButtonWithIcon(
+			container,
+			rpl::duplicate(label),
+			st::settingsButton,
+			std::move(descriptor))
+		: AddButtonWithLabel(
+			container,
+			rpl::duplicate(label),
+			rpl::duplicate(value) | rpl::map([](const auto &t) {
+				return t.text;
+			}),
+			st::settingsButton,
+			std::move(descriptor));
+	if (markedValue) {
+		CreateRightLabel(
+			wrap,
+			rpl::duplicate(value),
+			st::settingsButton,
+			rpl::duplicate(label));
+	}
 	const auto forcopy = Ui::CreateChild<QString>(wrap.get());
 	wrap->setAcceptBoth();
 	wrap->clicks(
@@ -374,19 +402,14 @@ not_null<Ui::SettingsButton*> AddRow(
 		if (button == Qt::LeftButton) {
 			edit();
 		} else if (!forcopy->isEmpty()) {
-			ShowMenu(wrap, copyButton, *forcopy);
+			ShowMenu(wrap, copyButton, *forcopy, copyIcon, menuExtender);
 		}
 	}, wrap->lifetime());
 
-	auto existing = base::duplicate(
+	std::move(
 		value
-	) | rpl::map([](const TextWithEntities &text) {
-		return text.entities.isEmpty();
-	});
-	base::duplicate(
-		value
-	) | rpl::filter([](const TextWithEntities &text) {
-		return text.entities.isEmpty();
+	) | rpl::filter([=](const TextWithEntities &text) {
+		return markedValue || text.entities.isEmpty();
 	}) | rpl::on_next([=](const TextWithEntities &text) {
 		*forcopy = text.text;
 	}, wrap->lifetime());
@@ -909,9 +932,8 @@ void SetupAccountsWrap(
 		}
 
 		addAction(tr::lng_profile_copy_phone(tr::now), [=] {
-			const auto phone = rpl::variable<TextWithEntities>(
+			Info::Profile::CopyPhoneToClipboard(
 				Info::Profile::PhoneValue(session->user()));
-			QGuiApplication::clipboard()->setText(phone.current().text);
 		}, &st::menuIconCopy);
 
 		if (!locked) {
@@ -920,7 +942,7 @@ void SetupAccountsWrap(
 					callback({});
 				}, &st::menuIconProfile);
 			}
-			Window::MenuAddMarkAsReadAllChatsAction(
+			MarkAsReadMenu::AddAllChatsAction(
 				session,
 				window->uiShow(),
 				addAction);
@@ -1032,6 +1054,8 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 	using Environment = MTP::Environment;
 	const auto add = [=](Environment environment, bool newWindow = false) {
 		auto &domain = _controller->session().domain();
+		domain.removeRedundantAccounts();
+
 		auto found = false;
 		for (const auto &[index, account] : domain.accounts()) {
 			const auto raw = account.get();
@@ -1047,6 +1071,7 @@ not_null<Ui::SlideWrap<Ui::SettingsButton>*> AccountsList::setupAdd() {
 			domain.addActivated(environment, true);
 		} else {
 			_controller->window().preventOrInvoke([=] {
+				Core::App().setActivePrimaryWindow(&_controller->window());
 				_controller->session().domain().addActivated(environment);
 			});
 		}

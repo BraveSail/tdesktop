@@ -55,7 +55,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
-#include "styles/style_channel_earn.h"
 #include "styles/style_chat.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
@@ -616,17 +615,10 @@ void BuildBusinessSectionContent(
 			) | rpl::on_next(check, content->lifetime());
 
 			AddBusinessSummary(content, controller, state, [=](PremiumFeature feature) {
-				if (!session->premium()) {
-					if (state && state->setPaused) {
-						state->setPaused(true);
-					}
-					const auto hidden = crl::guard(content, [=] {
-						if (state && state->setPaused) {
-							state->setPaused(false);
-						}
-					});
-
-					ShowPremiumPreviewToBuy(controller, feature, hidden);
+				const auto alwaysAvailable
+					= (feature == PremiumFeature::BusinessBots);
+				if (!alwaysAvailable && !session->premium()) {
+					ShowPremiumPreviewToBuy(controller, feature, nullptr);
 					return;
 				} else if (!isReady(feature)) {
 					*waitingToShow = feature;
@@ -739,8 +731,8 @@ void Business::setupSwipeBack() {
 		}
 	};
 
-	auto init = [=](int, Qt::LayoutDirection direction) {
-		return (direction == Qt::RightToLeft)
+	auto init = [=](Ui::Controls::SwipeHandlerInitData data) {
+		return (data.direction == Qt::RightToLeft)
 			? DefaultSwipeBackHandlerFinishData([=] {
 				_showBack.fire({});
 			})
@@ -808,6 +800,7 @@ base::weak_qptr<Ui::RpWidget> Business::createPinnedToTop(
 				.logo = u"dollar"_q,
 				.title = std::move(title),
 				.about = std::move(about),
+				.use3dCoin = true,
 			});
 	}();
 	_state->setPaused = [=](bool paused) {
@@ -816,6 +809,10 @@ base::weak_qptr<Ui::RpWidget> Business::createPinnedToTop(
 			_subscribe->setGlarePaused(paused);
 		}
 	};
+	controller()->boxShownValue(
+	) | rpl::on_next([=](bool shown) {
+		_state->setPaused(shown);
+	}, content->lifetime());
 
 	_wrap.value(
 	) | rpl::on_next([=](Info::Wrap wrap) {

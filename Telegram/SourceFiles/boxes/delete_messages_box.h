@@ -42,6 +42,7 @@ public:
 	void setDeleteConfirmedCallback(Fn<void()> callback) {
 		_deleteConfirmedCallback = std::move(callback);
 	}
+	[[nodiscard]] crl::time layerAnimationDuration() const override;
 
 protected:
 	void prepare() override;
@@ -57,6 +58,7 @@ private:
 	void deleteAndClear();
 	[[nodiscard]] PeerData *checkFromSinglePeer() const;
 	[[nodiscard]] bool hasScheduledMessages() const;
+	[[nodiscard]] bool hasWelcomeTemplateMessages() const;
 	[[nodiscard]] bool hasSavedMusicMessages() const;
 	[[nodiscard]] std::optional<RevokeConfig> revokeText(
 		not_null<PeerData*> peer) const;

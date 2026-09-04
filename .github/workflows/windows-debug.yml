@@ -49,6 +49,7 @@ jobs:
     env:
       PREPARE_PATH: Telegram/build/prepare/prepare.py
       REPO_NAME: tdesktop
+      CACHE_NAMESPACE: v1.2.8-vs2026-v1
 
     defaults:
       run:
@@ -63,7 +64,7 @@ jobs:
           echo LibrariesPath=%GITHUB_WORKSPACE%\TBuild\Libraries\win64>>%GITHUB_ENV%
 
       - name: Clone.
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
           path: TBuild\tdesktop
@@ -82,10 +83,11 @@ jobs:
           echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
 
       - name: Native Tools Command Prompt.
-        uses: ilammy/msvc-dev-cmd@v1.13.0
+        uses: Eden-CI/msvc-dev-cmd@master
         with:
           arch: x64
           sdk: ${{ env.SDK }}
+          toolset: '14.44'
 
       - name: NuGet sources.
         run: |
@@ -94,15 +96,15 @@ jobs:
 
       - name: ThirdParty cache.
         id: third-party-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ${{ env.TBUILD }}\ThirdParty
-          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
-          restore-keys: ${{ runner.OS }}-${{ runner.arch }}-third-party-
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_NAMESPACE }}-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_NAMESPACE }}-
 
       - name: Libraries cache.
         id: libraries-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ env.LibrariesPath }}\*
@@ -110,18 +112,18 @@ jobs:
             !${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\*
             !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-libs-${{ env.CACHE_KEY }}
-          restore-keys: ${{ runner.OS }}-x64-libs-
+          key: ${{ runner.OS }}-x64-libs-${{ env.CACHE_NAMESPACE }}-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-libs-${{ env.CACHE_NAMESPACE }}-
 
       - name: Qt cache.
         id: qt-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}
-          restore-keys: ${{ runner.OS }}-x64-qt6-
+          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_NAMESPACE }}-${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_NAMESPACE }}-
 
       - name: Normalize cached prepare scripts.
         shell: pwsh
@@ -139,9 +141,6 @@ jobs:
           }
 
       - name: Libraries.
-        env:
-          GYP_MSVS_OVERRIDE_PATH: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\'
-          GYP_MSVS_VERSION: 2022
         run: |
           %TBUILD%\%REPO_NAME%\Telegram\build\prepare\win.bat skip-release silent qt6
 
@@ -166,15 +165,15 @@ jobs:
 
       - name: Save ThirdParty cache.
         if: steps.third-party-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         continue-on-error: true
         with:
           path: ${{ env.TBUILD }}\ThirdParty
-          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_KEY }}
+          key: ${{ runner.OS }}-${{ runner.arch }}-third-party-${{ env.CACHE_NAMESPACE }}-${{ env.CACHE_KEY }}
 
       - name: Save Libraries cache.
         if: steps.libraries-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         continue-on-error: true
         with:
           path: |
@@ -183,17 +182,17 @@ jobs:
             !${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\*
             !${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-libs-${{ env.CACHE_KEY }}
+          key: ${{ runner.OS }}-x64-libs-${{ env.CACHE_NAMESPACE }}-${{ env.CACHE_KEY }}
 
       - name: Save Qt cache.
         if: steps.qt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         continue-on-error: true
         with:
           path: |
             ${{ env.LibrariesPath }}\[qQ]t[_-]*
             ${{ env.LibrariesPath }}\cache_keys\[qQ]t[_-]*
-          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_KEY }}
+          key: ${{ runner.OS }}-x64-qt6-${{ env.CACHE_NAMESPACE }}-${{ env.CACHE_KEY }}
 
       - name: Telegram Desktop build.
         run: |

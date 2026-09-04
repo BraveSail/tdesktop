@@ -2,8 +2,12 @@ name: Snap.
 
 on:
   push:
+    # Pushes to dev2 run windows-debug.yml and windows-release.yml.
+    # Pushes to the canary branches run only canary.yml, see there.
     branches-ignore:
       - dev2
+      - public-canary
+      - private-canary
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -23,6 +27,8 @@ on:
   pull_request:
     branches-ignore:
       - dev2
+      - public-canary
+      - private-canary
     paths-ignore:
       - 'docs/**'
       - '**.md'
@@ -44,14 +50,14 @@ jobs:
 
   snap:
     name: Ubuntu
-    runs-on: ${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')) && 'depot-ubuntu-latest-16' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/nightly') && 'depot-ubuntu-latest-16' || 'ubuntu-latest' }}
 
     env:
       UPLOAD_ARTIFACT: "true"
 
     steps:
       - name: Clone.
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
@@ -89,3 +95,4 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: artifact
+          retention-days: 1
