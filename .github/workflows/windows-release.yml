@@ -18,12 +18,12 @@ on:
 jobs:
   windows-release:
     name: Windows x64 Qt6 Release
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     env:
       PREPARE_PATH: Telegram/build/prepare/prepare.py
       REPO_NAME: tdesktop
-      CACHE_NAMESPACE: v1.2.8-vs2026-v1
+      CACHE_NAMESPACE: v1.2.8-vs2022-v1
 
     defaults:
       run:
