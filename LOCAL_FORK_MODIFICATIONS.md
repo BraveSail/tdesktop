@@ -33,6 +33,30 @@ Only one submodule is forked; everything else points upstream.
   → their upstream sources. The TDesktop-x64 copies were plain mirrors
   (`lib_storage` carried only a 2-line unused-variable cleanup, dropped).
 
+### Merge-resolution traps (learned the hard way, 2026-09-13)
+
+Two classes of damage a merge does **not** surface as a conflict:
+
+1. **Never resolve a file with `git checkout --ours` / `--theirs`.** Those replace
+   the entire file with one side, silently discarding every change the other
+   side made — including the parts git had already auto-merged cleanly. This
+   cost a full CI cycle: `lang.strings` was resolved with `--ours`, which dropped
+   19 upstream keys whose only visible trace was a compile error far away
+   (`scene_item_text.cpp: error C2039: 'lng_photo_editor_text_style_opaque' is
+   not a member of 'tr'`). Resolve conflict *hunks* by hand instead, and always
+   re-check the result against upstream afterwards:
+   `comm -23 <(upstream keys) <(our keys)`.
+
+2. **Submodules carry their own hidden conflict surface.** When an upstream
+   release is followed directly (rather than via 64Gram), the submodule sources
+   change too, and anything 64Gram had patched *inside* a submodule is lost
+   without any conflict marker in the main tree. lib_ui hit this twice: the
+   Windows popup submenu ownership fix, and 64Gram's `WindowTitle`
+   "always on top" styles in `ui/widgets/widgets.style` (plus `banButtonBg` in
+   `ui/colors.palette`). Both live in `BraveSail/lib_ui` now, on top of the
+   upstream pointer. Before bumping a submodule pointer, diff the old fork
+   against upstream (`git diff <upstream> <fork> --stat`) and port what is ours.
+
 ### Enhancement hotspots (where upstream merges conflict)
 
 Files that upstream changes and this fork also touches, so they are the
