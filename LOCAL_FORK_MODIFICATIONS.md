@@ -6,15 +6,52 @@ locations may move when upstream refactors code.
 
 ## Current integration target
 
-- Fork base: `origin/dev2` at `56269c71018765dd3b88a0c14afaa5c0430d260b`.
-- Upstream target: TDesktop-x64/tdesktop `v1.2.8` at
-  `a17cad8e9846ee2a5679b335581722f9fb203dc1`.
-- Merge base: `a8351504232ea2705623f376131f4eb84e74df78`
-  (TDesktop-x64 1.2.3, based on Telegram Desktop 6.8.2).
-- The target is based on Telegram Desktop 7.1.3.
-- The fork has 18 unique commits and 47 changed files since the merge base.
-- Upstream has 2956 unique commits and 2004 changed files since the merge base.
-- Thirty files overlap and a merge dry-run reports 16 content conflicts.
+- **Upstream is now `telegramdesktop/tdesktop` directly** (remote `upstream`);
+  the previous upstream `TDesktop-x64/tdesktop` (64Gram) is kept as remote
+  `64gram` for reference only.
+- Current merge: official `v7.2.8` (`272f6f5c2d`) merged into `dev2` as
+  `62616012a5`, with the lib_ui pointer bumped by `0c59e046cc`.
+- The fork keeps 64Gram branding (`AppName` "64Gram Desktop", `AppFile`
+  "64Gram") because CI and the WinGet package id depend on it, but it now
+  follows the upstream version string (`7.2.8`). `UpstreamVersion` in
+  `core/version.h` tracks the upstream release the tree is based on.
+- `Telegram/build/version` intentionally has no BOM, matching upstream.
+
+### Submodule sources
+
+Only one submodule is forked; everything else points upstream.
+
+- `Telegram/lib_ui` → `BraveSail/lib_ui`. Its `master` is upstream's pointer
+  plus one commit, `Fix Windows popup submenu ownership`, which adds
+  `SubmenuParent()` in `ui/widgets/popup_menu.cpp` (Windows must not have a
+  popup own another popup, or native mouse presses get redirected to the
+  owner and the menu closes; Wayland needs the opposite).
+  **Keep this rebased onto whatever lib_ui pointer the merged upstream
+  release expects** — it must not drift behind, or the build fails on a
+  missing lib_ui API. Upstream does not have this fix (as of 7.2.8).
+- `lib_base`, `lib_storage`, `cmake` (`cmake_helpers`), `ThirdParty/tgcalls`
+  → their upstream sources. The TDesktop-x64 copies were plain mirrors
+  (`lib_storage` carried only a 2-line unused-variable cleanup, dropped).
+
+### Enhancement hotspots (where upstream merges conflict)
+
+Files that upstream changes and this fork also touches, so they are the
+first to check on every merge:
+
+- `Telegram/Resources/langs/lang.strings` — the fork's settings/feature
+  strings sit in one block; upstream adds new keys in the same area. Keep
+  both sides.
+- `Telegram/SourceFiles/history/view/history_view_message.cpp` — upstream
+  refactors gesture/paint code here (e.g. `hasGesture` → `gestureShift`).
+  Take upstream's structure, keep the `screenshot_mode` enhancement.
+- `Telegram/SourceFiles/menu/menu_item_download_files.cpp` — upstream's
+  `Collected()` skips a restricted item instead of dropping the whole menu
+  entry. Keep upstream's structure, but keep the
+  `allowsMediaDownloadControls()` check so Force Copy semantics survive.
+- Version/brand files (`core/version.h`, `build/version`,
+  `Resources/winrc/*.rc`, `Resources/uwp/AppX/AppxManifest.xml`).
+- Rounding out the ~59-file overlap: `history/view/*`, `calls/*`, `core/*`,
+  `boxes/*`, `storage/*`, `settings/*`, `Telegram/CMakeLists.txt`.
 
 ## Local user-visible behavior
 
