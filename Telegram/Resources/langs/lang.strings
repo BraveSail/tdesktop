@@ -8944,4 +8944,43 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_blocked_user_hint" = "[Blocked User Message]\n";
 "lng_folder_archive_failed" = "Failed to create archive.";
 "lng_folder_archive_status" = "ZIP archive";
+
+"lng_proxy_web_server_label" = "Web proxy server";
+
+"lng_gift_send_message_restricted" = "This user doesn't accept gifts with comments. Please remove the comment and try again.";
+
+"lng_context_edit_gif" = "Edit GIF";
+
+"lng_drag_folder_here" = "Drop folder here";
+
+"lng_drag_to_send_folder" = "to send it as an archive";
+
+"lng_drag_to_send_folder_files" = "to send all its files";
+
+"lng_drag_to_send_files_archive" = "to send them as one archive";
+
+"lng_call_rate_title" = "Rate this call";
+
+"lng_call_rate_description" = "Please rate the quality of this call.";
+
+"lng_call_ended_title" = "Call ended";
+
+"lng_photo_editor_text_style_opaque" = "Opaque";
+
+"lng_photo_editor_text_placeholder" = "Add Text";
+
+"lng_photo_editor_font" = "Font";
+
+"lng_photo_editor_font_default" = "Default";
+
+"lng_photo_editor_font_italic" = "Italic";
+
+"lng_photo_editor_font_serif" = "Serif";
+
+"lng_photo_editor_font_condensed" = "Condensed";
+
+"lng_photo_editor_font_monospace" = "Monospace";
+
+"lng_photo_editor_align" = "Alignment";
+
 // Keys finished
