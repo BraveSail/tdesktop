@@ -57,6 +57,25 @@ Two classes of damage a merge does **not** surface as a conflict:
    upstream pointer. Before bumping a submodule pointer, diff the old fork
    against upstream (`git diff <upstream> <fork> --stat`) and port what is ours.
 
+   **Do not assume "upstream is always the better side" — check the lineage.**
+   The right question per submodule is whether the 64Gram pointer *contains*
+   the upstream pointer:
+
+   ```bash
+   git merge-base --is-ancestor <upstream-pointer> <64gram-pointer> \
+     && echo superset || echo not-a-superset
+   ```
+
+   - **tgcalls** — 64Gram's fork is a **strict superset** of what tdesktop
+     7.2.8 expects, and the call code needs its extras (`enableStereoMode`,
+     `customBitrate`, `enableHDVideo` on `GroupInstanceDescriptor`,
+     `setIsStereoModeEnabled`). **Keep the 64Gram pointer**
+     (`TDesktop-x64/tgcalls`), otherwise `calls_group_call.cpp` stops compiling.
+   - **lib_base / lib_storage / cmake_helpers** — 64Gram's copies are
+     **older** than upstream (`AutoUpdateVersion` 4 vs 6, the tlottie
+     migration, the d3d validator). **Keep the upstream pointer.**
+   - **lib_ui** — upstream pointer plus our own patches, in `BraveSail/lib_ui`.
+
 ### Enhancement hotspots (where upstream merges conflict)
 
 Files that upstream changes and this fork also touches, so they are the
