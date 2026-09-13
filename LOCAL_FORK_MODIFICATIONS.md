@@ -76,6 +76,21 @@ Two classes of damage a merge does **not** surface as a conflict:
      migration, the d3d validator). **Keep the upstream pointer.**
    - **lib_ui** — upstream pointer plus our own patches, in `BraveSail/lib_ui`.
 
+   **Setting a submodule pointer: check out first, then stage — and verify the
+   remote.** `git update-index --cacheinfo 160000,<sha>,<path>` looks like it
+   works, but a later `git add <path>` re-records whatever commit the submodule
+   worktree has checked out, silently reverting the change. Correct order:
+
+   ```bash
+   git -C <path> checkout <sha>      # move the submodule worktree first
+   git add <path>                    # now staging records <sha>
+   git ls-tree HEAD <path>           # confirm locally
+   git push && git fetch && git ls-tree origin/<branch> <path>   # confirm remotely
+   ```
+
+   Skipping the remote check cost a full CI cycle: the pointer looked right
+   locally but the pushed commit still had the upstream one.
+
 ### Enhancement hotspots (where upstream merges conflict)
 
 Files that upstream changes and this fork also touches, so they are the
