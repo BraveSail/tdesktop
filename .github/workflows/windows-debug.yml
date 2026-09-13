@@ -82,6 +82,40 @@ jobs:
           echo "$SDK" >> CACHE_KEY.txt
           echo "CACHE_KEY=$(sha256sum CACHE_KEY.txt | awk '{ print $1 }')" >> $GITHUB_ENV
 
+      - name: Free runner disk space.
+        shell: pwsh
+        run: |
+          $paths = @(
+            "C:\Android",
+            "C:\cabal",
+            "C:\ghcup",
+            "C:\hostedtoolcache\windows\CodeQL",
+            "C:\hostedtoolcache\windows\go",
+            "C:\hostedtoolcache\windows\Java_Temurin-Hotspot_jdk",
+            "C:\hostedtoolcache\windows\Ruby",
+            "C:\hostedtoolcache\windows\stack",
+            "C:\Program Files\Android",
+            "C:\Program Files\Google\Chrome",
+            "C:\Program Files\MongoDB",
+            "C:\Program Files\MySQL",
+            "C:\Program Files\R",
+            "C:\Program Files\Microsoft SDKs\Azure",
+            "C:\ProgramData\chocolatey\lib\maven",
+            "C:\ProgramData\chocolatey\lib\pulumi"
+          )
+          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
+            Select-Object DeviceID, @{ Name = "FreeGBBefore"; Expression = { [math]::Round($_.FreeSpace / 1GB, 2) } }, @{ Name = "SizeGB"; Expression = { [math]::Round($_.Size / 1GB, 2) } } |
+            Format-Table -AutoSize
+          foreach ($path in $paths) {
+            if (Test-Path $path) {
+              Write-Host "Removing $path"
+              Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" |
+            Select-Object DeviceID, @{ Name = "FreeGBAfter"; Expression = { [math]::Round($_.FreeSpace / 1GB, 2) } }, @{ Name = "SizeGB"; Expression = { [math]::Round($_.Size / 1GB, 2) } } |
+            Format-Table -AutoSize
+
       - name: Native Tools Command Prompt.
         uses: Eden-CI/msvc-dev-cmd@master
         with:
