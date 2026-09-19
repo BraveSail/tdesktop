@@ -2,10 +2,10 @@ name: Windows.
 
 on:
   push:
-    # Pushes to dev2 run windows-debug.yml and windows-release.yml.
+    # Pushes to dev run windows-debug.yml and windows-release.yml.
     # Pushes to the canary branches run only canary.yml, see there.
     branches-ignore:
-      - dev2
+      - dev
       - public-canary
       - private-canary
     paths-ignore:
@@ -28,7 +28,7 @@ on:
       - 'Telegram/Telegram.plist'
   pull_request:
     branches-ignore:
-      - dev2
+      - dev
       - public-canary
       - private-canary
     paths-ignore:

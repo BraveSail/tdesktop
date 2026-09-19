@@ -9,7 +9,7 @@ locations may move when upstream refactors code.
 - **Upstream is now `telegramdesktop/tdesktop` directly** (remote `upstream`);
   the previous upstream `TDesktop-x64/tdesktop` (64Gram) is kept as remote
   `64gram` for reference only.
-- Current merge: official `v7.2.8` (`272f6f5c2d`) merged into `dev2` as
+- Current merge: official `v7.2.8` (`272f6f5c2d`) merged into `dev` as
   `62616012a5`, with the lib_ui pointer bumped by `0c59e046cc`.
 - The fork keeps 64Gram branding (`AppName` "64Gram Desktop", `AppFile`
   "64Gram") because CI and the WinGet package id depend on it, but it now
@@ -224,7 +224,7 @@ Required behavior:
 - Release builds retain `/FS`, embedded debug information, bounded parallelism,
   pagefile expansion, resource diagnostics, split caches, and Telegram upload.
 - Cached prepare patch scripts are normalized before use and before cache save.
-- A push to `dev2` currently creates a real release and sends it to Telegram.
+- A push to `dev` currently creates a real release and sends it to Telegram.
 
 Merge guidance:
 
@@ -233,7 +233,7 @@ Merge guidance:
 - Do not restore VS2022 overrides after upstream moves to VS2026/toolset 14.44.
 - Use a fresh cache namespace for the first build after toolchain changes.
 - Validate with `workflow_dispatch` and `send_to_telegram=false` before pushing
-  the final integration commit to `dev2`.
+  the final integration commit to `dev`.
 
 ## Predicted conflict files for v1.2.8
 
