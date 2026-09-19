@@ -344,6 +344,12 @@ void AddPrefToggle(
 		AddSkip(inner);
 		AddSubsectionTitle(inner, tr::lng_settings_network());
 
+		AddPrefToggle(
+			inner,
+			tr::lng_settings_show_rpc_errors(),
+			Core::kEnhancedShowRpcErrorsKey,
+			false);
+
 		auto uploadBoostBtn = AddButtonWithLabel(
 				inner,
 				tr::lng_settings_net_upload_speed_boost(),

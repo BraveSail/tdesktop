@@ -55,6 +55,8 @@ inline constexpr auto kEnhancedAutoInlineBotDisabledRemoteKey
 	= "enhanced-auto-inline-bot-disabled-remote"_cs;
 inline constexpr auto kEnhancedForceCopyKey
 	= "enhanced-force-copy"_cs;
+inline constexpr auto kEnhancedShowRpcErrorsKey
+	= "enhanced-show-rpc-errors"_cs;
 
 struct WindowPosition {
 	int32 moncrc = 0;

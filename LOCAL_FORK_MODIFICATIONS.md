@@ -9,12 +9,13 @@ locations may move when upstream refactors code.
 - **Upstream is now `telegramdesktop/tdesktop` directly** (remote `upstream`);
   the previous upstream `TDesktop-x64/tdesktop` (64Gram) is kept as remote
   `64gram` for reference only.
-- Current merge: official `v7.2.8` (`272f6f5c2d`) merged into `dev` as
-  `62616012a5`, with the lib_ui pointer bumped by `0c59e046cc`.
-- The fork keeps 64Gram branding (`AppName` "64Gram Desktop", `AppFile`
-  "64Gram") because CI and the WinGet package id depend on it, but it now
-  follows the upstream version string (`7.2.8`). `UpstreamVersion` in
-  `core/version.h` tracks the upstream release the tree is based on.
+- Current merge: official `v7.2.9` (`fb2e332095`) merged into `dev` as
+  `ac4d08eae2`.
+- The fork was renamed to **Mizugram**: `AppName` is "Mizugram Desktop",
+  `AppFile` is "Mizugram", the GitHub repo is `BraveSail/mizugram`, and CI
+  publishes GitHub releases tagged `mizugram-v*`. It follows the upstream
+  version string (`7.2.9`). `UpstreamVersion` in `core/version.h` tracks the
+  upstream release the tree is based on.
 - `Telegram/build/version` intentionally has no BOM, matching upstream.
 
 ### Submodule sources
@@ -175,6 +176,25 @@ Merge guidance:
 - Separate ordinary no-forward policy from hard ephemeral/privacy policy.
 - Audit chat lists, shared media, document/GIF corner downloads, overview,
   media viewer buttons, show-in-folder, and screenshot protection.
+
+### Show RPC errors (ported from Nagram)
+
+Required behavior:
+
+- When the enhanced toggle (`enhanced-show-rpc-errors`) is enabled, every RPC
+  request failure surfaces as a toast reading `type: description` (type only
+  when description is empty). Off by default; the toggle lives in Enhanced
+  Settings, Network section.
+- Display is marshalled to the main thread (`crl::on_main`) and happens even
+  for requests that registered their own fail handlers.
+
+Primary markers:
+
+- `Core::kEnhancedShowRpcErrorsKey`
+- `rpcErrorOccured` in `Telegram/SourceFiles/mtproto/mtp_instance.cpp`
+- `AddPrefToggle` call in `Settings::Enhanced::SetupEnhancedNetwork`
+- Ported from Nagram (`nextalone/nagram`): `ErrorDatabase.showErrorToast`
+  behind `NaConfig.getShowRPCError()`.
 
 ### Disable input status
 

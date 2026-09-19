@@ -9,6 +9,7 @@ of local changes.
 ## Credits
 
 - [64Gram (TDesktop-x64/tdesktop)][64gram] — the base this fork is built on
+- [Nagram (nextalone/nagram)][nagram] — some features are ported from it
 - [Telegram Desktop][tdesktop] — the upstream project
 
 ## License
@@ -23,6 +24,7 @@ is available [here][license].
 * [GNU/Linux using Docker][linux]
 
 [64gram]: https://github.com/TDesktop-x64/tdesktop
+[nagram]: https://github.com/nextalone/nagram
 [tdesktop]: https://github.com/telegramdesktop/tdesktop
 [license]: LICENSE
 [win]: docs/building-win.md

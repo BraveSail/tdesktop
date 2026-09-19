@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/call_delayed.h"
 #include "base/timer.h"
 #include "base/network_reachability.h"
+#include "ui/toast/toast.h"
 #include "test/test_rpc_retry.h"
 
 namespace MTP {
@@ -1243,6 +1244,16 @@ bool Instance::Private::rpcErrorOccured(
 		error.description().isEmpty()
 			? QString()
 			: QString(": %1").arg(error.description())));
+	if (Core::App().settings().readPref<bool>(
+			Core::kEnhancedShowRpcErrorsKey,
+			false)) {
+		const auto text = error.description().isEmpty()
+			? error.type()
+			: (error.type() + ": " + error.description());
+		crl::on_main([=] {
+			Ui::Toast::Show(text);
+		});
+	}
 	if (onFail) {
 		const auto guard = QPointer<Instance>(_instance);
 		onFail(error, response);
