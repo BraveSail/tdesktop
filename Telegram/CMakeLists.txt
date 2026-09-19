@@ -56,7 +56,11 @@ endif()
 include(cmake/generate_update_keys.cmake)
 generate_update_keys(Telegram ${res_loc}/update)
 
-if (DESKTOP_APP_TEST_APPS OR DESKTOP_APP_SPECIAL_TARGET)
+option(DESKTOP_APP_BUILD_PACKER "Build the update Packer and its update verification test." OFF)
+
+if (DESKTOP_APP_TEST_APPS
+    OR DESKTOP_APP_SPECIAL_TARGET
+    OR DESKTOP_APP_BUILD_PACKER)
     include(cmake/test_update_verify.cmake)
 endif()
 
@@ -2585,7 +2589,7 @@ if (NOT DESKTOP_APP_DISABLE_AUTOUPDATE AND NOT build_macstore AND NOT build_wins
         )
     endif()
 
-    if (DESKTOP_APP_SPECIAL_TARGET)
+    if (DESKTOP_APP_SPECIAL_TARGET OR DESKTOP_APP_BUILD_PACKER)
         add_executable(Packer)
         init_target(Packer)
 

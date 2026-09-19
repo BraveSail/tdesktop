@@ -301,6 +301,7 @@ jobs:
               -D "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded" `
               -D "CMAKE_COMPILE_WARNING_AS_ERROR=ON" `
               -D "DESKTOP_APP_ENABLE_LTO=ON" `
+              -D "DESKTOP_APP_BUILD_PACKER=ON" `
               -D "DESKTOP_APP_DISABLE_AUTOUPDATE=OFF" `
               -D "DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF"
             if ($LASTEXITCODE -ne 0) {
@@ -344,6 +345,7 @@ jobs:
       - name: Check artifact.
         run: |
           if not exist %TBUILD%\%REPO_NAME%\out\Release\Telegram.exe exit /b 1
+          if not exist %TBUILD%\%REPO_NAME%\out\Release\Packer.exe exit /b 1
 
       - name: Pack artifact.
         shell: pwsh
@@ -384,11 +386,101 @@ jobs:
           }
           $archives | Select-Object Name, @{ Name = "SizeMB"; Expression = { [math]::Round($_.Length / 1MB, 2) } } | Format-Table -AutoSize
 
+      - name: Pack update package.
+        shell: pwsh
+        env:
+          UPDATE_CHANNEL_KEY: ${{ secrets.UPDATE_CHANNEL_KEY }}
+        run: |
+          if (-not $env:UPDATE_CHANNEL_KEY) {
+            throw "The UPDATE_CHANNEL_KEY secret is not set."
+          }
+          $source = Join-Path $env:TBUILD "$env:REPO_NAME\out\Release"
+          $artifact = Join-Path $env:GITHUB_WORKSPACE "artifact"
+          $versionFile = Join-Path $env:TBUILD "$env:REPO_NAME\Telegram\build\version"
+          $baseVersion = (Select-String -Path $versionFile -Pattern '^AppVersion\s+(\d+)$').Matches.Groups[1].Value
+          if (-not $baseVersion) {
+            throw "Could not read AppVersion from $versionFile."
+          }
+          $payload = Join-Path $env:RUNNER_TEMP "update-payload"
+          New-Item -ItemType Directory -Path $payload -Force | Out-Null
+          foreach ($name in @("Telegram.exe", "Updater.exe")) {
+            Copy-Item (Join-Path $source $name) $payload -Force
+          }
+          $keyFile = Join-Path $env:RUNNER_TEMP "update-signing.pem"
+          [System.IO.File]::WriteAllText($keyFile, $env:UPDATE_CHANNEL_KEY.TrimEnd() + "`n")
+          $keysLoc = Join-Path $env:TBUILD "$env:REPO_NAME\Telegram\Resources\update"
+          Push-Location $env:RUNNER_TEMP
+          try {
+            & (Join-Path $source "Packer.exe") -path $payload -version $baseVersion -channel stable -keys-loc $keysLoc -local-key $keyFile -local-key-id mz-stable-2026a
+            if ($LASTEXITCODE -ne 0) {
+              throw "Packer failed with exit code $LASTEXITCODE."
+            }
+          } finally {
+            Pop-Location
+            Remove-Item $keyFile -Force -ErrorAction SilentlyContinue
+          }
+          $updateFile = "td-update-win-x64-$baseVersion"
+          $updatePath = Join-Path $env:RUNNER_TEMP $updateFile
+          if (-not (Test-Path $updatePath)) {
+            throw "Packer did not produce $updateFile."
+          }
+          Copy-Item $updatePath $artifact -Force
+          Set-Content -Path (Join-Path $artifact "update-info.txt") -Value @($baseVersion, $updateFile) -Encoding utf8NoBOM
+          Get-Item $updatePath | Select-Object Name, @{ Name = "SizeMB"; Expression = { [math]::Round($_.Length / 1MB, 2) } } | Format-Table -AutoSize
+
       - name: Upload artifact.
         uses: actions/upload-artifact@v7
         with:
           name: Mizugram Windows x64 Qt6 Release
           path: artifact\
+
+  publish-updates:
+    name: Publish update channel
+    needs: windows-release
+    if: github.event_name == 'push' || inputs.create_github_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download artifact.
+        uses: actions/download-artifact@v7
+        with:
+          name: Mizugram Windows x64 Qt6 Release
+          path: update-files
+
+      - name: Build update site.
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          base="$(sed -n '1p' update-files/update-info.txt | tr -d '\r')"
+          file="$(sed -n '2p' update-files/update-info.txt | tr -d '\r')"
+          if [ -z "${base}" ] || [ -z "${file}" ]; then
+            echo "update-info.txt is incomplete." >&2
+            exit 1
+          fi
+          if [ ! -f "update-files/${file}" ]; then
+            echo "Missing update package ${file}." >&2
+            exit 1
+          fi
+          cp "update-files/${file}" "site/${file}"
+          printf '{"win64":{"stable":{"released":%s,"link":"/%s"}}}\n' "${base}" "${file}" > site/check
+          cat site/check
+
+      - name: Upload Pages artifact.
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages.
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   telegram-upload:
     name: Send release to Telegram
