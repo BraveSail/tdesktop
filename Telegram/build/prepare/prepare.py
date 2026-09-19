@@ -173,9 +173,11 @@ def computeCacheKey(stage):
         stage['version'],
         stage['commands']
     ]
+    inputs = []
     for pattern in stage['dependencies']:
         pathlist = glob.glob(os.path.join(libsDir, pattern))
         items = [pattern]
+        hashes = []
         if len(pathlist) == 0:
             pathlist = glob.glob(os.path.join(thirdPartyDir, pattern))
         if len(pathlist) == 0:
@@ -183,12 +185,18 @@ def computeCacheKey(stage):
         for path in pathlist:
             if not os.path.exists(path):
                 error('Not found: ' + path)
-            items.append(computeFileHash(path))
+            hashes.append(computeFileHash(path))
+        items = items + hashes
         objects.append(':'.join(items))
+        inputs.append(pattern + ' ' + ' '.join(hashes))
+    stage['inputs'] = inputs
     return hashlib.sha1(';'.join(objects).encode('utf-8')).hexdigest()
 
 def keyPath(stage):
     return os.path.join(stage['directory'], keysLoc, stage['name'])
+
+def inputsPath(stage):
+    return os.path.join(stage['directory'], keysLoc, stage['name'] + '.inputs')
 
 def checkCacheKey(stage):
     if not 'key' in stage:
@@ -212,6 +220,45 @@ def writeCacheKey(stage):
     key = keyPath(stage)
     with open(key, 'w') as file:
         file.write(stage['key'])
+    with open(inputsPath(stage), 'w') as file:
+        file.write('\n'.join(stage.get('inputs', [])))
+
+def staleReason(stage):
+    path = inputsPath(stage)
+    if not os.path.exists(path):
+        return 'no recorded inputs'
+    with open(path, 'r') as file:
+        recorded = file.read().split('\n')
+    reasons = []
+    for index, after in enumerate(stage.get('inputs', [])):
+        before = recorded[index] if index < len(recorded) else ''
+        if before == after:
+            continue
+        name = after.split(' ')[0]
+        beforeHashes = before.split(' ')[1:]
+        afterHashes = after.split(' ')[1:]
+        for i in range(max(len(beforeHashes), len(afterHashes))):
+            one = beforeHashes[i][:8] if i < len(beforeHashes) else '-'
+            two = afterHashes[i][:8] if i < len(afterHashes) else '-'
+            if one != two:
+                reasons.append(name + ' ' + one + '->' + two)
+    return ', '.join(reasons) if reasons else 'unknown input changed'
+
+def normalizeWinBuildScripts():
+    if not win:
+        return
+    patchesDir = os.path.join(libsDir, 'patches')
+    if not os.path.isdir(patchesDir):
+        return
+    pattern = re.compile(r'-j(\d+|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)')
+    for path in glob.glob(os.path.join(patchesDir, 'build_*_win.sh')):
+        with open(path, 'r', encoding='utf-8', newline='') as file:
+            text = file.read()
+        normalized = pattern.sub('-j8', text)
+        if normalized != text:
+            with open(path, 'w', encoding='utf-8', newline='') as file:
+                file.write(normalized)
+            print('Normalized ' + path)
 
 stages = []
 
@@ -390,6 +437,7 @@ def runStages():
         version = ('#' + str(stage['version'])) if (stage['version'] != '0') else ''
         prefix = '[' + str(index) + '/' + str(count) + '](' + stage['location'] + '/' + stage['name'] + version + ')'
         print(prefix + ': ', end = '', flush=True)
+        normalizeWinBuildScripts()
         stage['key'] = computeCacheKey(stage)
         commands = removeDir(stage['name']) + '\n' + stage['commands']
         checkResult = 'Forced' if len(onlyStages) > 0 else checkCacheKey(stage)
@@ -400,7 +448,7 @@ def runStages():
             print('NOT FOUND, ', end='')
         elif checkResult == 'Stale' or checkResult == 'Forced':
             if checkResult == 'Stale':
-                print('CHANGED, ', end='')
+                print('CHANGED (' + staleReason(stage) + '), ', end='')
             if rebuildStale:
                 checkResult == 'Rebuild'
             else:
