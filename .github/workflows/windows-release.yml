@@ -411,7 +411,7 @@ jobs:
           $keysLoc = Join-Path $env:TBUILD "$env:REPO_NAME\Telegram\Resources\update"
           Push-Location $env:RUNNER_TEMP
           try {
-            & (Join-Path $source "Packer.exe") -path $payload -version $baseVersion -channel stable -keys-loc $keysLoc -local-key $keyFile -local-key-id mz-stable-2026a
+            & (Join-Path $source "Packer.exe") -path $payload -version $baseVersion -target win64 -channel stable -keys-loc $keysLoc -local-key $keyFile -local-key-id mz-stable-2026a
             if ($LASTEXITCODE -ne 0) {
               throw "Packer failed with exit code $LASTEXITCODE."
             }
