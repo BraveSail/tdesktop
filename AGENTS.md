@@ -7,6 +7,12 @@
 - Preserve local functionality unless upstream has an equivalent or better
   implementation. Inspect whole runtime paths and validate behavior markers;
   do not resolve conflicts by blindly taking upstream.
+- **Both lineages must survive every merge: the 64Gram-inherited features AND
+  this fork's own local modifications.** Keep 64Gram behavior (its enhanced
+  options, extra actions, and the branding/CI constraints they carry) and keep
+  every BraveSail local change recorded in `LOCAL_FORK_MODIFICATIONS.md`. When
+  upstream refactored the code around a feature, port the feature onto
+  upstream's new structure; never let a merge drop either lineage.
 
 This guide defines repository-wide instructions for coding agents working with the Telegram Desktop codebase.
 
