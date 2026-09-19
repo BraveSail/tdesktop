@@ -2617,6 +2617,10 @@ if (NOT DESKTOP_APP_DISABLE_AUTOUPDATE AND NOT build_macstore AND NOT build_wins
             target_compile_definitions(Packer PRIVATE PACKER_USE_PACKAGED)
         endif()
 
+        if (NOT EXISTS "${src_loc}/../../../DesktopPrivate/packer_private.h")
+            target_compile_definitions(Packer PRIVATE PACKER_DISABLE_PRIVATE)
+        endif()
+
         set_target_properties(Packer PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${output_folder})
     endif()
 elseif (build_winstore)
