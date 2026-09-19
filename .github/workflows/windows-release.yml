@@ -351,12 +351,13 @@ jobs:
           $artifact = Join-Path $env:GITHUB_WORKSPACE "artifact"
           New-Item -ItemType Directory -Path $artifact -Force | Out-Null
           $source = Join-Path $env:TBUILD "$env:REPO_NAME\out\Release"
-          $archive = Join-Path $artifact "Telegram-Windows-x64-Qt6-Release-${{ github.run_number }}.7z"
           $versionFile = Join-Path $env:TBUILD "$env:REPO_NAME\Telegram\build\version"
           $version = (Select-String -Path $versionFile -Pattern '^AppVersionStr\s+(.+)$').Matches.Groups[1].Value
           if (-not $version) {
             throw "Could not read AppVersionStr from $versionFile."
           }
+          $version = $version.Trim()
+          $archive = Join-Path $artifact "Mizugram-Windows-x64-Qt6-Release-$version.7z"
           Set-Content -Path (Join-Path $artifact "release-version.txt") -Value $version -Encoding utf8NoBOM
 
           $files = @(
@@ -386,7 +387,7 @@ jobs:
       - name: Upload artifact.
         uses: actions/upload-artifact@v7
         with:
-          name: Telegram Windows x64 Qt6 Release
+          name: Mizugram Windows x64 Qt6 Release
           path: artifact\
 
   telegram-upload:
@@ -403,7 +404,7 @@ jobs:
       - name: Download artifact.
         uses: actions/download-artifact@v7
         with:
-          name: Telegram Windows x64 Qt6 Release
+          name: Mizugram Windows x64 Qt6 Release
           path: telegram-upload
 
       - name: Start local Telegram Bot API.
@@ -450,7 +451,7 @@ jobs:
             echo "Missing TG_CHAT_ID secret." >&2
             exit 1
           fi
-          mapfile -t files < <(find telegram-upload -maxdepth 1 -type f -name 'Telegram-Windows-x64-Qt6-Release-*.7z' | sort)
+          mapfile -t files < <(find telegram-upload -maxdepth 1 -type f -name 'Mizugram-Windows-x64-Qt6-Release-*.7z' | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release archive found for Telegram upload." >&2
             exit 1
@@ -486,7 +487,7 @@ jobs:
       - name: Download artifact.
         uses: actions/download-artifact@v7
         with:
-          name: Telegram Windows x64 Qt6 Release
+          name: Mizugram Windows x64 Qt6 Release
           path: release-files
 
       - name: Publish release.

@@ -248,6 +248,17 @@ jobs:
         run: |
           if not exist %TBUILD%\%REPO_NAME%\out\Debug\Telegram.exe exit /b 1
 
+      - name: Read version.
+        id: version
+        shell: pwsh
+        run: |
+          $versionFile = Join-Path $env:TBUILD "$env:REPO_NAME\Telegram\build\version"
+          $version = (Select-String -Path $versionFile -Pattern '^AppVersionStr\s+(.+)$').Matches.Groups[1].Value
+          if (-not $version) {
+            throw "Could not read AppVersionStr from $versionFile."
+          }
+          "value=$($version.Trim())" >> $env:GITHUB_OUTPUT
+
       - name: Move artifact.
         run: |
           mkdir artifact
@@ -256,5 +267,5 @@ jobs:
       - name: Upload artifact.
         uses: actions/upload-artifact@v7
         with:
-          name: Telegram Windows x64 Qt6 Debug
+          name: Mizugram-Windows-x64-Qt6-Debug-${{ steps.version.outputs.value }}
           path: artifact\
