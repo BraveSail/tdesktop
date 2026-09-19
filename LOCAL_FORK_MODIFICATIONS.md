@@ -33,6 +33,15 @@ locations may move when upstream refactors code.
   overrides it) and language packs come from
   `https://raw.githubusercontent.com/BraveSail/Localization/master/%1.json`.
   The TL viewer still points at `tdesktop-x64.github.io/tlv/`.
+- Update trust is ours, not upstream's: `Resources/update/root-public.pem`,
+  `manifest.min.json` and `manifest.sig` hold the Mizugram Ed25519 root key and
+  a manifest that authorizes `mz-stable-2026a` for the `stable` and `beta`
+  channels. A merge must never bring upstream's files back — the client would
+  then trust Telegram's key and reject our packages. Private keys live outside
+  the repository; a package is signed with
+  `Packer -path <dir> -version <N> -channel stable
+  -keys-loc Telegram/Resources/update -local-key <stable-private.pem>
+  -local-key-id mz-stable-2026a`.
 - `Telegram/build/version` intentionally has no BOM, matching upstream.
 
 ### Submodule sources
@@ -132,7 +141,8 @@ first to check on every merge:
   entry. Keep upstream's structure, but keep the
   `allowsMediaDownloadControls()` check so Force Copy semantics survive.
 - Version/brand files (`core/version.h`, `build/version`,
-  `Resources/winrc/*.rc`, `Resources/uwp/AppX/AppxManifest.xml`).
+  `Resources/winrc/*.rc`, `Resources/uwp/AppX/AppxManifest.xml`,
+  `Resources/update/*` — the update trust material is ours).
 - Rounding out the ~59-file overlap: `history/view/*`, `calls/*`, `core/*`,
   `boxes/*`, `storage/*`, `settings/*`, `Telegram/CMakeLists.txt`.
 
@@ -269,6 +279,11 @@ Required behavior:
   pagefile expansion, resource diagnostics, split caches, and Telegram upload.
 - Cached prepare patch scripts are normalized before use and before cache save.
 - A push to `dev` currently creates a real release and sends it to Telegram.
+- Release artifacts are named
+  `Mizugram-{platform}-{arch}-{qt}-{Release|Debug}-{version}`, the version
+  being `AppVersionStr` from `Telegram/build/version` (the same string the
+  About box shows): `Mizugram-Windows-x64-Qt6-Release-7.2.9.7z` for the release
+  archive, `Mizugram-Windows-x64-Qt6-Debug-7.2.9` for the debug upload.
 
 Merge guidance:
 
