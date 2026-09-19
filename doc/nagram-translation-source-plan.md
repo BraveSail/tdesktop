@@ -2,7 +2,7 @@
 
 ## Goal
 
-Port Nagram's translation source feature into 64Gram Desktop, with LLM translation as a first-class source.
+Port Nagram's translation source feature into Mizugram Desktop, with LLM translation as a first-class source.
 
 The feature is not complete until all three user-facing entry points stay in sync:
 

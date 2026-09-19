@@ -16,11 +16,28 @@ locations may move when upstream refactors code.
   publishes GitHub releases tagged `mizugram-v*`. It follows the upstream
   version string (`7.2.9`). `UpstreamVersion` in `core/version.h` tracks the
   upstream release the tree is based on.
+- The application id is `io.github.bravesail.Mizugram`: `lib/xdg/` file names,
+  `Resources/qrc/telegram/telegram.qrc`, `CMakeLists.txt`,
+  `platform/linux/specific_linux.cpp` and `core/update_checker.cpp`. The three
+  `QFile::remove(...)` calls in `specific_linux.cpp` still name
+  `io.github.tdesktop_x64.TDesktop` on purpose: they delete the desktop and
+  D-Bus files that pre-rename builds installed, so they must not follow the id.
+- Branding must survive merges: user-visible text lives in
+  `Resources/langs/lang.strings` and `Resources/langs/localization/en.json`
+  (the embedded pack applied at runtime, so a stale key there overrides
+  `lang.strings`), plus `Resources/winrc/*.rc`, `build/setup.iss`,
+  `lib/xdg/*` and the repository URLs in `docs/`.
+- Sources are BraveSail's own: the default update prefix is
+  `https://bravesail.github.io/mizugram/` (nothing is published there yet, so
+  the built-in update check fails quietly; the `update_url` enhanced setting
+  overrides it) and language packs come from
+  `https://raw.githubusercontent.com/BraveSail/Localization/master/%1.json`.
+  The TL viewer still points at `tdesktop-x64.github.io/tlv/`.
 - `Telegram/build/version` intentionally has no BOM, matching upstream.
 
 ### Submodule sources
 
-Only one submodule is forked; everything else points upstream.
+Three submodules are BraveSail forks; everything else points upstream.
 
 - `Telegram/lib_ui` → `BraveSail/lib_ui`. Its `master` is upstream's pointer
   plus one commit, `Fix Windows popup submenu ownership`, which adds
@@ -30,9 +47,13 @@ Only one submodule is forked; everything else points upstream.
   **Keep this rebased onto whatever lib_ui pointer the merged upstream
   release expects** — it must not drift behind, or the build fails on a
   missing lib_ui API. Upstream does not have this fix (as of 7.2.8).
-- `lib_base`, `lib_storage`, `cmake` (`cmake_helpers`), `ThirdParty/tgcalls`
-  → their upstream sources. The TDesktop-x64 copies were plain mirrors
-  (`lib_storage` carried only a 2-line unused-variable cleanup, dropped).
+- `lib_base` and `cmake` (`cmake_helpers`) → their upstream sources.
+- `Telegram/lib_storage` → `BraveSail/lib_storage`, forked from
+  `TDesktop-x64/lib_storage` and pinned at its tip `d167d22` ("Ignore applied
+  error"): it drops a local variable that upstream `ccdc725` still assigns,
+  which the Windows release build rejects under warnings-as-errors.
+- `Telegram/ThirdParty/tgcalls` → `BraveSail/tgcalls`, forked from
+  `TDesktop-x64/tgcalls`; see the tgcalls note below.
 
 ### Merge-resolution traps (learned the hard way, 2026-09-13)
 
@@ -70,11 +91,14 @@ Two classes of damage a merge does **not** surface as a conflict:
    - **tgcalls** — 64Gram's fork is a **strict superset** of what tdesktop
      7.2.8 expects, and the call code needs its extras (`enableStereoMode`,
      `customBitrate`, `enableHDVideo` on `GroupInstanceDescriptor`,
-     `setIsStereoModeEnabled`). **Keep the 64Gram pointer**
-     (`TDesktop-x64/tgcalls`), otherwise `calls_group_call.cpp` stops compiling.
-   - **lib_base / lib_storage / cmake_helpers** — 64Gram's copies are
-     **older** than upstream (`AutoUpdateVersion` 4 vs 6, the tlottie
-     migration, the d3d validator). **Keep the upstream pointer.**
+     `setIsStereoModeEnabled`). **Keep the fork** (`BraveSail/tgcalls`, forked
+     from `TDesktop-x64/tgcalls`), otherwise `calls_group_call.cpp` stops
+     compiling.
+   - **lib_base / cmake_helpers** — 64Gram's copies are **older** than
+     upstream (`AutoUpdateVersion` 4 vs 6, the tlottie migration, the d3d
+     validator). **Keep the upstream pointer.**
+   - **lib_storage** — upstream plus 64Gram's unused-variable fix, in
+     `BraveSail/lib_storage`; keep it until upstream fixes the warning.
    - **lib_ui** — upstream pointer plus our own patches, in `BraveSail/lib_ui`.
 
    **Setting a submodule pointer: check out first, then stage — and verify the

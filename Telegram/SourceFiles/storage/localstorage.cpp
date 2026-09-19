@@ -566,7 +566,7 @@ QString readAutoupdatePrefixRaw() {
 	{
 		return value;
 	}
-	return AutoupdatePrefix("https://updates.64gr.am");
+	return AutoupdatePrefix("https://bravesail.github.io/mizugram/");
 }
 
 void writeAutoupdatePrefix(const QString &prefix) {
@@ -1480,9 +1480,9 @@ void CustomLangPack::fetchCustomLangPack(const QString& langPackId, const QStrin
 
 	QUrl url;
 	if (!langPackId.isEmpty() && !langPackBaseId.isEmpty() && !needFallback) {
-		url.setUrl(qsl("https://tdesktop-x64.github.io/Localization/%1.json").arg(langPackId));
+		url.setUrl(qsl("https://raw.githubusercontent.com/BraveSail/Localization/master/%1.json").arg(langPackId));
 	} else {
-		url.setUrl(qsl("https://tdesktop-x64.github.io/Localization/%1.json").arg(needFallback ? langPackBaseId : langPackId));
+		url.setUrl(qsl("https://raw.githubusercontent.com/BraveSail/Localization/master/%1.json").arg(needFallback ? langPackBaseId : langPackId));
 	}
 	_chkReply = networkManager.get(QNetworkRequest(url));
 	connect(_chkReply, SIGNAL(error(QNetworkReply::NetworkError)), this, SLOT(fetchError(QNetworkReply::NetworkError)));
@@ -1498,7 +1498,7 @@ void CustomLangPack::fetchFinished() {
 	auto statusCode = _chkReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
 	if (statusCode == 404 && !langPackId.isEmpty() && !langPackBaseId.isEmpty() && !needFallback) {
-		LOG(("64Gram Language pack not found! Fallback to main language: %1...").arg(langPackBaseId));
+		LOG(("Mizugram Language pack not found! Fallback to main language: %1...").arg(langPackBaseId));
 		needFallback = true;
 		_chkReply->disconnect();
 		fetchCustomLangPack("", langPackBaseId);
@@ -1526,12 +1526,12 @@ void CustomLangPack::fetchError(QNetworkReply::NetworkError e) {
 		QString langPackId = Lang::GetInstance().id();
 
 		if (!langPackId.isEmpty() && !langPackBaseId.isEmpty() && !needFallback) {
-			LOG(("64Gram Language pack not found! Fallback to main language: %1...").arg(langPackBaseId));
+			LOG(("Mizugram Language pack not found! Fallback to main language: %1...").arg(langPackBaseId));
 			needFallback = true;
 			_chkReply->disconnect();
 			fetchCustomLangPack("", langPackBaseId);
 		} else {
-			LOG(("64Gram Language pack not found! Fallback to default language: English..."));
+			LOG(("Mizugram Language pack not found! Fallback to default language: English..."));
 			loadDefaultLangFile();
 			_chkReply = nullptr;
 		}

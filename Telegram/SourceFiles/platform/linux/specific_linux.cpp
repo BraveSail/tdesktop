@@ -233,7 +233,7 @@ bool GenerateDesktopFile(
 	DEBUG_LOG(("App Info: placing .desktop file to %1").arg(targetPath));
 	if (!QDir(targetPath).exists()) QDir().mkpath(targetPath);
 
-	const auto sourceFile = u":/misc/io.github.tdesktop_x64.TDesktop.desktop"_q;
+	const auto sourceFile = u":/misc/io.github.bravesail.Mizugram.desktop"_q;
 	const auto targetFile = targetPath
 		+ QGuiApplication::desktopFileName()
 		+ u".desktop"_q;
@@ -740,7 +740,7 @@ void start() {
 		//		Core::Launcher::Instance().instanceHash().constData());
 		//}
 
-		return u"io.github.tdesktop_x64.TDesktop"_q;
+		return u"io.github.bravesail.Mizugram"_q;
 	}());
 
 	LOG(("App ID: %1").arg(QGuiApplication::desktopFileName()));

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <component type="desktop">
-    <id>io.github.tdesktop_x64.TDesktop</id>
+    <id>io.github.bravesail.Mizugram</id>
     <metadata_license>CC0-1.0</metadata_license>
     <project_license>GPL-3.0</project_license>
-    <name>64Gram Desktop</name>
+    <name>Mizugram Desktop</name>
     <summary>Unofficial desktop version of Telegram messaging app</summary>
     <description>
         <p>Provide Windows 64bit build with some enhancements.</p>
@@ -12,13 +12,13 @@
         <category>Network</category>
         <category>InstantMessaging</category>
     </categories>
-    <update_contact>corehusky_at_gmail.com</update_contact>
-    <developer_name>Husky</developer_name>
-    <url type="homepage">https://64gr.am/</url>
-    <url type="bugtracker">https://github.com/TDesktop-x64/tdesktop/issues</url>
+    <update_contact>i_at_see.moe</update_contact>
+    <developer_name>BraveSail</developer_name>
+    <url type="homepage">https://github.com/BraveSail/mizugram</url>
+    <url type="bugtracker">https://github.com/BraveSail/mizugram/issues</url>
     <screenshots>
       <screenshot type="default">
-        <image>https://raw.githubusercontent.com/TDesktop-x64/tdesktop/dev/docs/assets/preview.png</image>
+        <image>https://raw.githubusercontent.com/BraveSail/mizugram/dev/docs/assets/preview.png</image>
       </screenshot>
     </screenshots>
     <keywords>
@@ -72,10 +72,10 @@
         <content_attribute id="money-gambling">none</content_attribute>
         <content_attribute id="money-advertising">moderate</content_attribute>
     </content_rating>
-    <launchable type="desktop-id">io.github.tdesktop_x64.TDesktop.desktop</launchable>
+    <launchable type="desktop-id">io.github.bravesail.Mizugram.desktop</launchable>
     <provides>
         <binary>telegram-desktop</binary>
-        <dbus type="session">io.github.tdesktop_x64.TDesktop</dbus>
+        <dbus type="session">io.github.bravesail.Mizugram</dbus>
         <mediatype>x-scheme-handler/tg</mediatype>
     </provides>
 </component>

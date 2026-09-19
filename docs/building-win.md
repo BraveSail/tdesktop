@@ -43,7 +43,7 @@ Run both `Clone source code and prepare libraries` and `Build the project` secti
 
 In the initialized terminal, go to ***BuildPath*** and run
 
-    git clone --recursive https://github.com/TDesktop-x64/tdesktop.git
+    git clone --recursive https://github.com/BraveSail/mizugram.git
     tdesktop\Telegram\build\prepare\win.bat
 
 ## Build the project
