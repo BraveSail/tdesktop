@@ -11,6 +11,14 @@ on:
         options:
           - "true"
           - "false"
+      create_github_release:
+        description: Publish the release archive to GitHub Releases
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
   push:
     branches:
       - dev
@@ -456,7 +464,7 @@ jobs:
             if [ "$count" -gt 1 ]; then
               details="${details}"$'\n'"- part $((index + 1))/$count"
             fi
-            caption="#64Gram <a href=\"${commit_url}\">${version}</a> #Windows_x64"$'\n'"<blockquote expandable>${details}</blockquote>"
+            caption="#Mizugram <a href=\"${commit_url}\">${version}</a> #Windows_x64"$'\n'"<blockquote expandable>${details}</blockquote>"
             curl -fsS \
               -X POST \
               "${TG_BOT_API_URL}/bot${TG_BOT_TOKEN}/sendDocument" \
@@ -465,3 +473,35 @@ jobs:
               -F "caption=${caption}" \
               -F "document=@${file}"
           done
+
+  github-release:
+    name: Publish GitHub release
+    needs: windows-release
+    if: github.event_name == 'push' || inputs.create_github_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact.
+        uses: actions/download-artifact@v7
+        with:
+          name: Telegram Windows x64 Qt6 Release
+          path: release-files
+
+      - name: Publish release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < release-files/release-version.txt)"
+          tag="mizugram-v${version}"
+          if gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; updating assets."
+            gh release upload "$tag" release-files/*.7z --clobber --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "$tag" release-files/*.7z \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Mizugram ${version}" \
+              --generate-notes
+          fi
