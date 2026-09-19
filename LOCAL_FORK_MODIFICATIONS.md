@@ -35,10 +35,15 @@ locations may move when upstream refactors code.
   The TL viewer still points at `tdesktop-x64.github.io/tlv/`.
 - Update trust is ours, not upstream's: `Resources/update/root-public.pem`,
   `manifest.min.json` and `manifest.sig` hold the Mizugram Ed25519 root key and
-  a manifest that authorizes `mz-stable-2026a` for the `stable` and `beta`
-  channels. A merge must never bring upstream's files back — the client would
-  then trust Telegram's key and reject our packages. Private keys live outside
-  the repository; a package is signed with
+  a manifest that lists all four channels with one key each: `mz-stable-2026a`
+  (stable), `mz-beta-2026a` (beta), `mz-canary-2026a` (canary-public) and
+  `mz-canary-priv-2026a` (canary-private). The update verification test built
+  for the Packer target asserts that the embedded manifest verifies, carries a
+  version and lists four channels, so a trimmed manifest breaks that build. A
+  merge must never bring upstream's files back — the client would then trust
+  Telegram's key and reject our packages. Private keys live outside the
+  repository; CI signs through the `UPDATE_CHANNEL_KEY` repository secret, and
+  manually a package is signed with
   `Packer -path <dir> -version <N> -channel stable
   -keys-loc Telegram/Resources/update -local-key <stable-private.pem>
   -local-key-id mz-stable-2026a`.
@@ -284,6 +289,13 @@ Required behavior:
   being `AppVersionStr` from `Telegram/build/version` (the same string the
   About box shows): `Mizugram-Windows-x64-Qt6-Release-7.2.9.7z` for the release
   archive, `Mizugram-Windows-x64-Qt6-Debug-7.2.9` for the debug upload.
+- `windows-release.yml` configures with `-D DESKTOP_APP_BUILD_PACKER=ON`, a
+  fork-local option that adds the `Packer` and `test_update_verify` targets
+  without switching on the whole `DESKTOP_APP_SPECIAL_TARGET` (which would also
+  force the LTO/`/WX`/D3D-helper release profile). The release signs
+  `td-update-win-x64-<AppVersion>` with the stable channel key and publishes it
+  together with the `/check` JSON to the update prefix
+  `https://bravesail.github.io/mizugram/` (GitHub Pages, `publish-updates` job).
 
 Merge guidance:
 
