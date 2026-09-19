@@ -1274,7 +1274,7 @@ bool Application::openInternalUrl(const QString &url, QVariant context) {
 }
 
 QString Application::changelogLink() const {
-	return u"https://github.com/TDesktop-x64/tdesktop/releases"_q;
+	return u"https://github.com/BraveSail/tdesktop/releases"_q;
 }
 
 bool Application::openCustomUrl(

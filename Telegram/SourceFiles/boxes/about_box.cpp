@@ -47,11 +47,11 @@ rpl::producer<TextWithEntities> Text2() {
 		lt_gpl_link,
 		rpl::single(tr::link(
 			"GNU GPL",
-			"https://github.com/TDesktop-x64/tdesktop/blob/dev/LICENSE")),
+			"https://github.com/BraveSail/tdesktop/blob/dev2/LICENSE")),
 		lt_github_link,
 		rpl::single(tr::link(
 			"GitHub",
-			"https://github.com/TDesktop-x64/tdesktop")),
+			"https://github.com/BraveSail/tdesktop")),
 		tr::marked);
 }
 
