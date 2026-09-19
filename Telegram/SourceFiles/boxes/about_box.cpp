@@ -47,11 +47,11 @@ rpl::producer<TextWithEntities> Text2() {
 		lt_gpl_link,
 		rpl::single(tr::link(
 			"GNU GPL",
-			"https://github.com/BraveSail/tdesktop/blob/dev2/LICENSE")),
+			"https://github.com/BraveSail/mizugram/blob/dev/LICENSE")),
 		lt_github_link,
 		rpl::single(tr::link(
 			"GitHub",
-			"https://github.com/BraveSail/tdesktop")),
+			"https://github.com/BraveSail/mizugram")),
 		tr::marked);
 }
 
@@ -65,7 +65,7 @@ rpl::producer<TextWithEntities> Text3() {
 } // namespace
 
 void AboutBox(not_null<Ui::GenericBox*> box) {
-	box->setTitle(u"64Gram Desktop"_q);
+	box->setTitle(u"Mizugram Desktop"_q);
 
 	auto layout = box->verticalLayout();
 

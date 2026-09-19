@@ -385,8 +385,8 @@ MainMenu::MainMenu(
 	parentResized();
 
 	_telegram->setMarkedText(tr::link(
-		u"64Gram Desktop"_q,
-		u"https://github.com/BraveSail/tdesktop"_q));
+		u"Mizugram Desktop"_q,
+		u"https://github.com/BraveSail/mizugram"_q));
 	_telegram->setLinksTrusted();
 	// The canary version is too long for the "Version {version}" form.
 	_version->setMarkedText(

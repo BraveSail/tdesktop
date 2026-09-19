@@ -1,6 +1,6 @@
 # Local Fork Modifications
 
-This file records BraveSail/tdesktop behavior that must survive merges from
+This file records BraveSail/mizugram behavior that must survive merges from
 TDesktop-x64/tdesktop. Treat behavior as authoritative; old implementation
 locations may move when upstream refactors code.
 
