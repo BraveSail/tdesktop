@@ -1,62 +1,32 @@
-﻿# 64Gram – Based on [Telegram Desktop](https://github.com/telegramdesktop/tdesktop)
+﻿# Telegram Desktop — 64Gram-based fork
 
-The source code is published under GPLv3 with OpenSSL exception, the license is available [here][license].
+This repository is a fork built upon [64Gram][64gram], with a set of local
+modifications on top.
 
-[![Preview of 64Gram][preview_image]][preview_image_url]
+本仓库基于 [64Gram][64gram]，并在其基础上做了一些本地修改。
 
-## Project Goal
+See [LOCAL_FORK_MODIFICATIONS.md](LOCAL_FORK_MODIFICATIONS.md) for the list
+of local changes.
 
-Provide Windows 64bit build with some enhancements.
+## Credits / 鸣谢
 
-~~Cause official Telegram Desktop do not provide Windows 64bit build, so [Project TDesktop x64](https://github.com/TDesktop-x64) is aimed at provide Windows native x64 build(with few enhancements) to everybody.~~
+- [64Gram (TDesktop-x64/tdesktop)][64gram] — the base this fork is built on
+- [Telegram Desktop][tdesktop] — the upstream project
 
-## Roadmap
+## License
 
-No Roadmap? Yes.
-
-## [Features](features.md)
-
-## Supported systems
-
-Windows 7 and above
-
-Linux 64 bit
-
-macOS > 10.12 and above
-
-The latest version is available on the [Release](https://github.com/TDesktop-x64/tdesktop/releases) page.
-
-## Localization
-
-If you want to translate this project, **Just Do It!**
-
-Create a Pull Request: [Localization Repo](https://github.com/TDesktop-x64/Localization).
-
-**Here is a project [translation template](https://github.com/TDesktop-x64/Localization/blob/master/en.json).**
-
-You can find a language ID on Telegram's log.txt
-
-For example: `[2022.04.23 10:37:45] Current Language pack ID: de, Base ID: `
-
-Then your language translation filename is `de.json` or something like that.
-
-***Note: Ignore base ID(base ID translation - Work in progress)***
+The source code is published under GPLv3 with OpenSSL exception, the license
+is available [here][license].
 
 ## Build instructions
 
-* [Windows (32-bit and 64-bit)][win]
+* [Windows][win]
 * [macOS][mac]
 * [GNU/Linux using Docker][linux]
 
-## Links
-
-* [Official Telegram Channel](https://t.me/tg_x64)
-* [Official discussion group](https://t.me/tg_x64_chat)
-
-[//]: # (LINKS)
+[64gram]: https://github.com/TDesktop-x64/tdesktop
+[tdesktop]: https://github.com/telegramdesktop/tdesktop
 [license]: LICENSE
 [win]: docs/building-win.md
 [mac]: docs/building-mac.md
 [linux]: docs/building-linux.md
-[preview_image]: https://github.com/TDesktop-x64/tdesktop/blob/dev/docs/assets/preview.png "Preview of 64Gram Desktop"
-[preview_image_url]: https://raw.githubusercontent.com/TDesktop-x64/tdesktop/dev/docs/assets/preview.png
